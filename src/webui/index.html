@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>xpskill · 聊天记录蒸馏工作台</title>
+<link rel="stylesheet" href="/static/style.css">
+<link rel="icon" href="/static/logo.png">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <img class="brand__mark" src="/static/logo.png" alt="芯派" width="30" height="30">
+    <span class="brand__name">xpskill</span>
+    <span class="brand__sub">聊天记录 → 人设技能包</span>
+  </div>
+  <div class="status">
+    <span class="status__cell"><em>文件</em><b id="chip-file">未选择</b></span>
+    <span class="status__cell"><em>消息</em><b id="chip-count">—</b></span>
+    <span class="status__cell"><em>关系</em><b id="chip-relation">—</b></span>
+    <span class="state" id="chip-state"><i class="dot"></i><b id="state-text">待命</b></span>
+  </div>
+</header>
+
+<main class="layout">
+  <!-- ───────────────────────── 左栏 ───────────────────────── -->
+  <aside class="rail">
+
+    <section class="card">
+      <h2 class="card__head"><span class="num">01</span>进料<span class="en">intake</span></h2>
+      <div class="card__body">
+        <div class="dropzone" id="dropzone" tabindex="0" role="button">
+          <input type="file" id="file" hidden>
+          <span class="dropzone__icon" aria-hidden="true">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 9.9V2.4M5.3 5.1L8 2.4l2.7 2.7"/><path d="M2.7 10.4v1.7c0 .9.7 1.6 1.6 1.6h7.4c.9 0 1.6-.7 1.6-1.6v-1.7"/></svg>
+          </span>
+          <p class="dropzone__text">拖入或点击选择聊天记录</p>
+          <p class="dropzone__hint">txt·csv·json·db·mht·mhtml·mbox·js</p>
+        </div>
+
+        <p class="alert" id="parse-error" hidden></p>
+
+        <div class="diag" id="diagnosis" hidden>
+          <div class="kv"><span>识别为</span><b class="num" id="diag-parser"></b></div>
+          <div class="kv"><span>解析结果</span><b class="num" id="diag-total"></b></div>
+          <div class="kv"><span>时间跨度</span><b class="num" id="diag-range"></b></div>
+          <div class="kv"><span>可用编码</span><b class="num" id="diag-enc"></b></div>
+
+          <h3 class="sub">说话人</h3>
+          <div class="speakers" id="diag-speakers"></div>
+
+          <h3 class="sub">各解析器命中<span class="sub__note">对不上号的格式会静默降级，这里能看到是谁接走的</span></h3>
+          <div class="bars" id="diag-bars"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2 class="card__head"><span class="num">02</span>配置<span class="en">config</span></h2>
+      <div class="card__body">
+        <label class="field">
+          <span class="field__k">技能名<em>英文，决定文件名</em></span>
+          <input type="text" id="f-name" value="persona" spellcheck="false">
+        </label>
+
+        <div class="field-row">
+          <label class="field">
+            <span class="field__k">我是谁</span>
+            <select id="f-me">
+              <option value="我">我（默认）</option>
+            </select>
+          </label>
+          <label class="field">
+            <span class="field__k">蒸馏谁</span>
+            <select id="f-target">
+              <option value="">自动</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="field-row field-row--ratio">
+          <label class="field">
+            <span class="field__k">关系类型</span>
+            <select id="f-relation">
+              <option value="auto">自动判断</option>
+              <option value="恋人">恋人</option>
+              <option value="朋友">朋友</option>
+              <option value="同事">同事</option>
+              <option value="家人">家人</option>
+            </select>
+          </label>
+          <label class="field">
+            <span class="field__k">补充描述<em>可选</em></span>
+            <input type="text" id="f-desc" placeholder="ENFP，双子座">
+          </label>
+        </div>
+
+        <h3 class="sub">蒸馏方式</h3>
+        <div class="seg">
+          <label class="seg__opt">
+            <input type="radio" name="mode" value="offline" checked>
+            <span>本地抽取</span>
+          </label>
+          <label class="seg__opt">
+            <input type="radio" name="mode" value="llm">
+            <span>LLM 蒸馏</span>
+          </label>
+        </div>
+        <p class="seg__hint seg__hint--offline">不联网 · 不需要 Key · 不脱敏，直接读全部记录</p>
+        <p class="seg__hint seg__hint--llm">调用 OpenAI 兼容接口，需要 Key，叙述更细腻</p>
+
+        <div class="llm-config" id="llm-config" hidden>
+          <label class="field">
+            <span class="field__k">接口地址</span>
+            <input type="text" id="f-baseurl" value="https://api-inference.modelscope.cn/v1" spellcheck="false">
+          </label>
+          <label class="field">
+            <span class="field__k">模型</span>
+            <input type="text" id="f-model" value="Qwen/Qwen3-235B-A22B" spellcheck="false">
+          </label>
+          <label class="field">
+            <span class="field__k">API Key<em>只留在本机内存</em></span>
+            <input type="password" id="f-apikey" spellcheck="false">
+          </label>
+        </div>
+
+        <div class="check-row">
+          <label class="check">
+            <input type="checkbox" id="f-strict">
+            <span>严格模式</span><em>不过的直接删</em>
+          </label>
+          <label class="check">
+            <input type="checkbox" id="f-noverify">
+            <span>跳过校验</span>
+          </label>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2 class="card__head"><span class="num">03</span>执行<span class="en">run</span></h2>
+      <div class="card__body">
+        <button class="btn btn--go" id="run" disabled>
+          <svg class="ico ico--lg" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.6 2.4l1.2 2.9 2.9 1.2-2.9 1.2-1.2 2.9-1.2-2.9L2.5 6.5l2.9-1.2z"/><path d="M12.2 9.6l.62 1.48 1.48.62-1.48.62-.62 1.48-.62-1.48L10.1 11.7l1.48-.62z"/></svg>开始蒸馏</button>
+        <div class="artifact" id="artifact" hidden>
+          <a class="btn btn--ghost" id="download" href="#">下载技能包</a>
+          <label class="field">
+            <span class="field__k">上传到设备<em>可选，例 192.168.1.10:8080</em></span>
+            <input type="text" id="f-device" placeholder="IP:端口" spellcheck="false">
+          </label>
+        </div>
+      </div>
+    </section>
+  </aside>
+
+  <!-- ───────────────────────── 右栏 ───────────────────────── -->
+  <section class="workspace">
+    <nav class="tabs" id="tabs">
+      <button class="tab is-active" data-view="log">
+        <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 4.2h7M6 8h7M6 11.8h7"/><circle cx="3" cy="4.2" r="1" fill="currentColor" stroke="none"/><circle cx="3" cy="8" r="1" fill="currentColor" stroke="none"/><circle cx="3" cy="11.8" r="1" fill="currentColor" stroke="none"/></svg>运行日志</button>
+      <button class="tab" data-view="verify" disabled>
+        <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="8" r="5.9"/><path d="M5.5 8.3l1.7 1.7 3.4-3.8"/></svg>校验</button>
+      <button class="tab" data-view="skill" disabled>
+        <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 2.6h5.3l3.3 3.2v7.6H4z"/><path d="M9.2 2.6v3.4h3.3"/></svg>SKILL.md</button>
+      <button class="tab" data-view="memory" disabled>
+        <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 4.7C7 3.6 5.6 3.1 3.4 3.1v9.1c2.2 0 3.6.5 4.6 1.6 1-1.1 2.4-1.6 4.6-1.6V3.1c-2.2 0-3.6.5-4.6 1.6z"/><path d="M8 4.7v9.1"/></svg>关系记忆</button>
+    </nav>
+
+    <div class="views">
+      <article class="view is-active" id="view-log">
+        <div class="placeholder" id="placeholder">
+          <div class="placeholder__box">[ 等待输入 ]</div>
+          <p class="placeholder__title">还没有开始</p>
+          <p class="placeholder__hint">左侧放入聊天记录 → 检查诊断结果 → 点击「开始蒸馏」<br>六步流水线会实时输出到这里</p>
+        </div>
+        <div class="log" id="log"></div>
+      </article>
+
+      <article class="view" id="view-verify">
+        <div class="verify" id="verify"></div>
+      </article>
+
+      <article class="view markdown" id="view-skill"></article>
+      <article class="view markdown" id="view-memory"></article>
+    </div>
+  </section>
+</main>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

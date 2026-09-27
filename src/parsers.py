@@ -481,6 +481,47 @@ def decode_quoted_printable(text: str) -> str:
         return text
 
 
+def strip_mime_envelope(text: str) -> str:
+    """丢掉 MHT/MHTML 的 MIME 信封，只留第一个 part 的正文。
+
+    信封是：
+        From: ...
+        Content-Type: multipart/related; boundary="----=_NextPart_000"
+        <空行>
+        ------=_NextPart_000
+        Content-Type: text/html; charset="utf-8"
+        <空行>
+        <正文>
+
+    strip_html 只去标签，不去信封，于是 `MIME-Version: 1.0` 这类头会原样留下——
+    而下游的「昵称: 内容」通用解析器恰好以冒号为分隔符，会把它们当成聊天消息
+    （实测解析结果里冒出说话人 `MIME-Version`、首条消息 `1.0`）。
+    """
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    head = text.split("\n\n", 1)[0]
+    # 先确认开头确实是一段 MIME 头再动手。
+    # 必须这么保守：正文里出现一行以 `--` 开头的内容是完全可能的，
+    # 只看边界就切会把边界之前的聊天记录整段丢掉。
+    if not re.search(r"^(MIME-Version|Content-Type|Content-Transfer-Encoding"
+                     r"|From|Subject|Date):", head, re.MULTILINE):
+        return text
+    m = re.search(r"^--(\S+)", text, re.MULTILINE)
+    if not m:
+        return text                      # 没有 MIME 边界，不是多变体文件
+    token = m.group(1).rstrip("-")       # 边界标识（去掉结尾的连字符）
+    if not token:
+        return text
+    body = text[m.end():]
+    # 第一个 part 自己的头部（Content-Type / Content-Transfer-Encoding）到第一个空行为止
+    part = re.search(r"\n[ \t]*\n", body)
+    if part:
+        body = body[part.end():]
+    # 只按**同一个**边界标识切，丢掉后续 part 和结束边界。
+    # 不能见到 `--` 开头就切：正文里完全可能出现以 -- 开头的一行，
+    # 那样会把这条消息之后的所有聊天记录一起丢掉。
+    return re.split(r"^--" + re.escape(token), body, flags=re.MULTILINE)[0]
+
+
 def read_text_any(path: Path) -> str | None:
     raw = path.read_bytes()
     # utf-8 必须排在 gb18030 前面：gb18030 几乎能"解码"任何字节，会掩盖真正的 UTF-8
@@ -500,42 +541,152 @@ def _looks_like_whatsapp(text: str) -> bool:
     return sum(1 for line in lines if WHATSAPP_HEAD.match(line)) >= 2
 
 
-def load_messages(path: Path, channel: str | None = None) -> list[Msg]:
+#: 图片/文件类标记常带哈希文件名：[图片:B572F40F778BC9CC9C3EB0D5036505AB.jpg]
+MEDIA_TAG_RE = re.compile(
+    r"\[(图片|照片|表情|语音|视频|文件|链接|位置|动画表情|回复消息|合并转发|转账|红包)"
+    r"\s*[:：][^\[\]]{0,240}\]"
+)
+#: QQ 表情码：整条消息由一个或多个 "/睁眼" 这样的码组成（faceType 2）
+FACE_RUN_RE = re.compile(r"(?:/[^\s/:：，。！？、]{1,12})+")
+#: 文件收发提示：对方已接收文件「xxx.docx」
+FILE_NOTICE_RE = re.compile(r"^(?:对方|我|你)?已?(?:接收|发送)文件[「『\"].*[」』\"]$")
+
+
+def normalize_message_text(text: str) -> str:
+    """把导出格式里的媒体标记收拾干净。
+
+    不做这一步，图片的哈希文件名（……F40F778BC9CC.jpg）和表情码（/睁眼）
+    会被当成口头禅，十六进制片段 A5 / EB / 9A 会占据头几名——
+    这在真实导出数据里非常普遍。
+    """
+    if not text:
+        return text
+    text = MEDIA_TAG_RE.sub(lambda m: f"[{m.group(1)}]", text)
+    stripped = text.strip()
+    if FILE_NOTICE_RE.match(stripped):
+        return "[文件]"
+    if FACE_RUN_RE.search(text) and not FACE_RUN_RE.sub("", text).strip():
+        return "[表情]"
+    return text
+
+
+#: 逐个试解析器时用的编码顺序，和 read_text_any 保持一致
+ENCODINGS = ("utf-8-sig", "utf-8", "gb18030", "utf-16")
+
+
+def diagnose(path: Path) -> dict:
+    """回报每个解析器能解出多少条，用来解释"为什么只解析出 N 条"。
+
+    解析是整条流水线的入口，错在这里后面全白做，但 load_messages 是完全静默的：
+    用户只会看到"没解析出任何消息"，分不清是格式不支持、编码猜错，
+    还是走了错误的解析器。
+    """
+    raw = path.read_bytes()
+    decodable = []
+    for enc in ENCODINGS:
+        try:
+            raw.decode(enc)
+        except UnicodeDecodeError:
+            continue
+        decodable.append(enc)
+
+    candidates: list[dict] = []
+
+    def probe(name: str, fn) -> None:
+        try:
+            msgs = fn()
+        except Exception as exc:  # 单个解析器出错不该拖垮整份报告
+            candidates.append({"parser": name, "count": 0, "error": str(exc)[:160]})
+            return
+        candidates.append({
+            "parser": name,
+            "count": len(msgs),
+            "speakers": len({m.speaker for m in msgs}),
+            "with_ts": sum(1 for m in msgs if m.ts),
+        })
+
+    suffix = path.suffix.lower()
+    if suffix in (".db", ".sqlite", ".sqlite3") or raw[:16] == b"SQLite format 3\x00":
+        probe("微信 SQLite（MSG 表）", lambda: parse_wechat_db(path))
+    if suffix == ".csv":
+        probe("CSV 表格", lambda: parse_csv(path))
+    if suffix == ".json":
+        probe("JSON 消息数组", lambda: parse_json_log(path))
+    if suffix == ".js":
+        probe("Twitter/X 归档", lambda: parse_twitter_js(path))
+    if suffix == ".mbox":
+        probe("mbox 邮件归档", lambda: parse_mbox(path))
+
+    text = read_text_any(path)
+    if text is not None:
+        body = text
+        # .mht 与 .mhtml 是同一格式的两种扩展名（QQ 消息管理器导出 .mht，
+        # 浏览器另存网页给 .mhtml），必须一起处理，否则会拿 MIME 源码当正文。
+        if suffix in (".mht", ".mhtml", ".html", ".htm"):
+            if suffix in (".mht", ".mhtml"):
+                body = decode_quoted_printable(strip_mime_envelope(body))
+            body = strip_html(body)
+        probe("QQ 消息管理器导出", lambda: parse_qq_txt(path, body))
+        probe("WhatsApp 导出", lambda: parse_whatsapp_txt(body))
+        probe("通用「昵称: 内容」文本", lambda: parse_generic_txt(body))
+
+    return {"candidates": candidates, "decodable_encodings": decodable}
+
+
+def load_messages(path: Path, channel: str | None = None,
+                  trace: list[str] | None = None) -> list[Msg]:
+    """解析任意支持的格式，并规范化媒体标记后返回。
+
+    传入 ``trace`` 会收到实际接走这份文件的解析器名——路由过程原本是完全静默的，
+    出了问题只能看到"没解析出任何消息"。
+    """
+    return [Msg(m.ts, m.speaker, normalize_message_text(m.text))
+            for m in _load_messages(path, channel, trace)]
+
+
+def _load_messages(path: Path, channel: str | None = None,
+                   trace: list[str] | None = None) -> list[Msg]:
+    def picked(name: str, msgs: list[Msg]) -> list[Msg]:
+        if trace is not None:
+            trace.append(name)
+        return msgs
+
     if path.is_dir():
         msgs: list[Msg] = []
         for child in sorted(path.rglob("*")):
             if child.is_file() and child.suffix.lower() in (
-                    ".txt", ".csv", ".json", ".mht", ".html", ".htm", ".js", ".mbox"):
-                msgs.extend(load_messages(child, channel=channel))
+                    ".txt", ".csv", ".json", ".mht", ".mhtml", ".html", ".htm",
+                    ".js", ".mbox"):
+                msgs.extend(_load_messages(child, channel=channel, trace=trace))
         return msgs
 
     suffix = path.suffix.lower()
     if suffix in (".db", ".sqlite", ".sqlite3") or path.read_bytes()[:16] == b"SQLite format 3\x00":
-        return parse_wechat_db(path, channel=channel)
+        return picked("微信 SQLite（MSG 表）", parse_wechat_db(path, channel=channel))
     if suffix == ".csv":
-        return parse_csv(path)
+        return picked("CSV 表格", parse_csv(path))
     if suffix == ".json":
-        return parse_json_log(path)
+        return picked("JSON 消息数组", parse_json_log(path))
     if suffix == ".js":
-        return parse_twitter_js(path)
+        return picked("Twitter/X 归档", parse_twitter_js(path))
     if suffix == ".mbox":
-        return parse_mbox(path)
+        return picked("mbox 邮件归档", parse_mbox(path))
 
     text = read_text_any(path)
     if text is None:
-        return []
-    if suffix in (".mht", ".html", ".htm"):
-        if suffix == ".mht":
-            text = decode_quoted_printable(text)
+        return picked("（无法识别编码）", [])
+    if suffix in (".mht", ".mhtml", ".html", ".htm"):
+        if suffix in (".mht", ".mhtml"):
+            text = decode_quoted_printable(strip_mime_envelope(text))
         text = strip_html(text)
 
     qq = parse_qq_txt(path, text)
     # 只有确实解析出说话人，才认为这是 QQ 导出格式；否则说明是别的排版
     if len(qq) >= 5 and any(m.speaker != "未知" for m in qq):
-        return qq
+        return picked("QQ 消息管理器导出", qq)
     if _looks_like_whatsapp(text):
-        return parse_whatsapp_txt(text)
-    return parse_generic_txt(text)
+        return picked("WhatsApp 导出", parse_whatsapp_txt(text))
+    return picked("通用「昵称: 内容」文本", parse_generic_txt(text))
 
 
 # ----------------------------------------------------------------------------

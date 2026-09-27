@@ -1,0 +1,973 @@
+/* ------------------------------------------------------------------
+   xpskill 工作台 —— iOS 26 液态玻璃 · 纯平背景
+
+   品牌色：#1246FF（蓝）  #FFCC14（黄）  底色：#E7F8FD（浅冰蓝）
+
+   ── 让磨砂真的看得见 ────────────────────────────────────────────
+   关键物理事实：**blur(N) 会把小于 N 的特征直接抹平**。
+
+   上一版背景铺的是 14px 单色点阵，而模糊半径是 22px——点阵只会被平均成
+   一块纯色，玻璃"毛"不起来。要让模糊看得见，背后的特征必须**大于**半径。
+   这正是"毛玻璃做了半天看不见"的根因。
+
+   所以背景改成四团**大尺度柔色场**（400~800px 量级，品牌蓝与黄的极淡
+   tint）：它们大到能穿过模糊、只被揉软，于是玻璃下方浮现"更饱和、更柔"
+   的色偏——这才是有物理依据的磨砂感，而不是靠装饰画出来的。
+
+   backdrop-filter 里的 saturate / brightness 是另一半：它们不像 blur
+   那样依赖高频内容，在任何背景上都起作用，把透上来的色场再推一档。
+
+   底色 #E7F8FD 亮度 0.912，与白色玻璃只差约 1.07:1——单靠明度差面板是
+   隐形的。所以面板边界靠三样东西：白填充 + 1px 描边 + 柔投影，而
+   **色场带来的彩度差才是让面板浮起来的主要力量**。
+   需要强调的元素一律上实色（激活标签 = 实色蓝 + 白字）。
+
+   ── 三条铁律 ────────────────────────────────────────────────────
+   1. 黄色不能拿来写字。纯黄在 #E7F8FD 底上只有 1.38:1；黄底上要压墨蓝。
+   2. 面积越大颜色越淡。纯黄只给小色块（按钮 / 印章 / 序号）。
+   3. 不给玻璃上再叠玻璃。激活标签与主按钮都是实色填充——
+      半透明叠半透明会让文字糊掉，且颜色要落在实色层上。
+      激活标签用实色蓝还有个更硬的理由：白药丸和标签栏只差
+      1.10:1，在这个亮底上根本凸不出来。
+
+   字体分三层（详见 :root 的注释）：
+    正文 / 标签 / 数值 → 系统字体栈（macOS 上是 SF Pro + 苹方）
+    标题 / 按钮 / 展示数字 → 站酷高端黑
+    代码 / 文件名 / 格式名 → ui-monospace（Apple 平台是 SF Mono）
+   ------------------------------------------------------------------ */
+
+@font-face {
+  font-family: "ZhanKuGaoDuanHei";
+  src: url("/static/fonts/ZhanKuGaoDuanHeiTi.ttf") format("truetype");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  /* ── 玻璃 ─────────────────────────────────────────────────── */
+  /* 模糊半径要配得上背景特征的尺度：色场在 400~800px 量级，
+     26px 只把它们揉软、不抹平——所以模糊终于是看得见的。
+     saturate / brightness 是另一半：它们不依赖高频内容，把透上来的
+     色场再推一档饱和与亮度。 */
+  --blur:        blur(26px) saturate(185%) brightness(1.06);
+  --blur-thin:   blur(20px) saturate(180%) brightness(1.05);
+  /* 白填充偏中等：太高会盖掉色场（玻璃就白得像塑料），
+     太低则面板与底色分不开。色场提供了彩度差之后，
+     这个透明度足够让"透上来的色"被看见。 */
+  --glass-pane:  rgba(255, 255, 255, .64);   /* 主内容区 */
+  --glass:       rgba(255, 255, 255, .58);   /* 侧栏面板 */
+  --glass-solid: rgba(255, 255, 255, .88);   /* 输入框 */
+  --shadow:    0 1px 2px rgba(22, 32, 63, .05),
+               0 8px 24px rgba(22, 32, 63, .08);
+  --shadow-lg: 0 2px 6px rgba(22, 32, 63, .05),
+               0 18px 44px rgba(22, 32, 63, .10);
+
+  /* ── 表面 ─────────────────────────────────────────────────── */
+  /* 平的：没有渐变、也没有彩色底层。 */
+  --bg:       #e7f8fd;
+  --tint-yellow: #ffefb8;
+  --tint-blue:   #eef2ff;
+  --line:    rgba(22, 32, 63, .10);
+  --line-2:  rgba(22, 32, 63, .16);
+
+  /* ── 品牌色 ───────────────────────────────────────────────── */
+  --blue:   #1246ff;
+  --blue-2: #0a35cc;
+  --blue-ring: rgba(18, 70, 255, .20);
+  --yellow:   #ffcc14;
+  --yellow-2: #ffdd5c;
+
+  /* ── 文字：比纯浅底时深一档，因为玻璃会把底色压暗 ──────────── */
+  --ink:   #16203f;
+  --ink-2: #39415c;
+  --ink-3: #4a5268;
+
+  --danger:    #cc2d3f;
+  --danger-bg: rgba(204, 45, 63, .10);
+
+  /* ── 字体三层分工 ────────────────────────────────────────────
+     正文 / 标签 / 数值 → 系统字体栈。macOS 上 system-ui 就是 SF Pro，
+     中文落到苹方（iOS 的中文字体）；Windows 是 Segoe UI + 微软雅黑。
+     这是"像 iOS"最要紧的一条：自定义字体再好看，也没有系统字体那套
+     光学尺寸、字距表和易读性调校。 */
+  --sans: system-ui, -apple-system, "Segoe UI", "PingFang SC",
+          "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+  /* 标题 / 按钮 / 展示数字 → 站酷高端黑。只出现在大字号和短文本上；
+     它没有系统中文字体的字重梯度，压在小字号正文上会喘不过气。 */
+  --display: "ZhanKuGaoDuanHei", system-ui, "PingFang SC",
+             "Microsoft YaHei", "Noto Sans SC", sans-serif;
+  /* 只留给真正的代码类内容：markdown 行内代码、文件名、格式名。
+     ui-monospace 在 Apple 平台就是 SF Mono。 */
+  --mono: ui-monospace, "SF Mono", "Cascadia Mono", Consolas, monospace;
+
+  /* ── 弹簧缓动（apple-design）─────────────────────────────────
+     固定时长的 cubic-bezier 无法被随时打断并反向，所以默认用弹簧。
+     这里用 linear() 精确采样临界阻尼弹簧 x(t) = 1-(1+ωt)e^(-ωt)，
+     damping 恒为 1.0（不超调）——超调只留给带惯性的手势，
+     而这个界面没有任何拖拽手势。时长必须与采样时长一致。 */
+  --spring-soft: linear(0, 0.0273 3.8%, 0.0925 7.7%, 0.1775 11.5%, 0.2699 15.4%, 0.3622 19.2%, 0.4499 23.1%, 0.5303 26.9%, 0.6023 30.8%, 0.6656 34.6%, 0.7205 38.5%, 0.7676 42.3%, 0.8076 46.2%, 0.8414 50%, 0.8697 53.8%, 0.8933 57.7%, 0.9128 61.5%, 0.929 65.4%, 0.9423 69.2%, 0.9532 73.1%, 0.9621 76.9%, 0.9694 80.8%, 0.9753 84.6%, 0.9801 88.5%, 0.984 92.3%, 0.9871 96.2%, 1);
+  --spring-snap: linear(0, 0.0342 3.8%, 0.1139 7.7%, 0.214 11.5%, 0.3195 15.4%, 0.4214 19.2%, 0.5148 23.1%, 0.5977 26.9%, 0.6695 30.8%, 0.7305 34.6%, 0.7817 38.5%, 0.8241 42.3%, 0.859 46.2%, 0.8874 50%, 0.9104 53.8%, 0.929 57.7%, 0.9439 61.5%, 0.9557 65.4%, 0.9652 69.2%, 0.9727 73.1%, 0.9786 76.9%, 0.9833 80.8%, 0.9869 84.6%, 0.9898 88.5%, 0.9921 92.3%, 0.9938 96.2%, 1);
+  --spring-sheet: linear(0, 0.025 3.8%, 0.0856 7.7%, 0.1652 11.5%, 0.2529 15.4%, 0.3415 19.2%, 0.4266 23.1%, 0.5056 26.9%, 0.5771 30.8%, 0.6407 34.6%, 0.6965 38.5%, 0.745 42.3%, 0.7866 46.2%, 0.8222 50%, 0.8523 53.8%, 0.8777 57.7%, 0.899 61.5%, 0.9168 65.4%, 0.9316 69.2%, 0.9439 73.1%, 0.9541 76.9%, 0.9624 80.8%, 0.9694 84.6%, 0.975 88.5%, 0.9797 92.3%, 0.9835 96.2%, 1);
+  --press: 90ms ease-out;
+
+  /* ── 几何 ─────────────────────────────────────────────────── */
+  --r:    22px;
+  --r-sm: 13px;
+  --r-xs: 10px;
+  --topbar-h:   clamp(48px, 6vh, 56px);
+  --topbar-top: clamp(6px, .9vh, 12px);
+  --pad:        clamp(12px, 1.8vh, 20px);
+  --pad-x:      clamp(12px, 1.3vw, 20px);
+  --tabs-h:     56px;
+  --rail:       344px;
+}
+
+* { box-sizing: border-box; }
+
+/* [hidden] 只是 UA 样式（display:none），会被作者样式里的 display 覆盖 */
+[hidden] { display: none !important; }
+
+/* 数值：系统字体 + 等宽数字。
+   原来为对齐位数去换一整套 Consolas，其实 tabular-nums 就够了——
+   等宽数字本来就是系统字体自带的能力，而 SF Pro 的表格数字正是
+   iOS 列表/表格的标准做法。 */
+.num { font-variant-numeric: tabular-nums; }
+
+/* ── iOS 的连续圆角 ──────────────────────────────────────────────
+   iOS 的圆角不是正圆弧，是**连续曲率**（超椭圆 / squircle）。
+   正圆弧在"直边转弧"那一刻曲率突变，肉眼会觉得比 iOS 硬一点；
+   squircle 让曲率平缓过渡，这正是 iOS 看起来"圆润但不肥"的原因。
+   corner-shape 是新属性：不支持的浏览器直接忽略，退回普通圆角，不会坏。 */
+@supports (corner-shape: squircle) {
+  .topbar, .card, .workspace, .tabs, .tabs::before, .dropzone, .btn, .seg,
+  .seg::before, .placeholder__box, .llm-config, .stamp, .speaker, .bar__used,
+  .finding__sec, .state, .brand__mark, .log-step .n, .card__head .num, .tab,
+  .check input, .alert, .markdown code, .markdown .flag, .markdown blockquote,
+  .markdown .frontmatter, input[type="text"], input[type="password"], select {
+    corner-shape: squircle;
+  }
+}
+
+/* SF Symbols 风格图标：细描边 + 圆头圆角，颜色跟着文字走 */
+.ico { flex: none; width: 15px; height: 15px; }
+.ico--lg { width: 17px; height: 17px; }
+
+/* ─────────────────── 基底 ─────────────────── */
+
+html, body { height: 100%; }
+
+body {
+  margin: 0;
+  /* flow-root 让 body 建立 BFC。不加这条，.topbar 的 margin-top 会
+     穿透 body（body 没有 padding/border）塌陷到外面，把 100% 高度的
+     body 整体下推 —— 文档高度变成 topbar-top + 100vh，页面凭空多出
+     6~8px 的滚动条。实测：视口 672 → 678，804 → 811，904 → 912，
+     增量恰好等于 --topbar-top。 */
+  display: flow-root;
+  background-color: var(--bg);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 14px;
+  line-height: 1.65;
+  -webkit-font-smoothing: antialiased;
+
+  /* 四团大尺度柔色场（品牌蓝 + 黄的极淡 tint）。
+     为什么不是细纹理：blur(26px) 会把小于 26px 的东西抹平，细点阵只会
+     被平均成纯色。只有**大于模糊半径**的特征才能穿过模糊被看见——
+     它们会被揉软、被 saturate 推饱和，在玻璃下方形成柔和的色偏。 */
+  background-image:
+    radial-gradient(58% 46% at 10% 4%,  rgba(18, 70, 255, .20), transparent 68%),
+    radial-gradient(52% 44% at 94% 14%, rgba(255, 204, 20, .34), transparent 70%),
+    radial-gradient(64% 52% at 80% 98%, rgba(18, 70, 255, .16), transparent 72%),
+    radial-gradient(46% 42% at 34% 76%, rgba(255, 204, 20, .22), transparent 70%);
+  background-attachment: fixed;
+}
+
+/* 背景是纯平的，不再有彩色底层与渐变。
+   代价要写清楚：面板的 backdrop-filter 现在没有东西可糊，
+   模糊只剩「浮动标签栏下方的滚动内容」这一处能被看见。 */
+
+/* ─────────────────── 顶栏（浮动玻璃药丸）─────────────────── */
+
+.topbar {
+  position: sticky; top: var(--topbar-top); z-index: 40;
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 24px; height: var(--topbar-h);
+  margin: var(--topbar-top) var(--pad-x) 0;
+  padding: 0 20px;
+  border-radius: 999px;
+  background: var(--glass);
+  backdrop-filter: var(--blur);
+  -webkit-backdrop-filter: var(--blur);
+  box-shadow:
+    /* 四层叠出"玻璃有厚度"，这是 iOS 材质最像的地方：
+       顶棱镜面高光 → 底棱内阴影(厚度) → 外廓细描边 → 顶部内辉光 */
+    inset 0 1px 0 rgba(255, 255, 255, .98),
+    inset 0 -1px 0 rgba(22, 32, 63, .05),
+    inset 0 0 0 1px rgba(22, 32, 63, .08),
+    inset 0 15px 24px -18px rgba(255, 255, 255, 1),
+    var(--shadow);
+  animation: rise .55s var(--spring-soft) both;
+}
+
+.brand { display: flex; align-items: center; gap: 11px; }
+/* 品牌标记是张图片（96px 源图，30px 显示，3x 屏也够清晰）。
+   原来这里是个蓝底白字的方块，换成图片后背景/字色/字体都交给图本身；
+   圆角与阴影保留，否则它会从顶栏的玻璃质感里"浮"出来。
+   阴影从原来的品牌蓝改中性色：蓝光是给蓝底方块打的，压在图片上会显脏。 */
+.brand__mark {
+  display: block;
+  width: 30px; height: 30px;
+  object-fit: contain;
+  border-radius: 10px;
+  box-shadow: 0 3px 10px rgba(22, 32, 63, .18);
+}
+.brand__name {
+  font-family: var(--display); font-size: 18px; letter-spacing: -.01em;
+  color: var(--ink); line-height: 1.1;
+}
+.brand__sub {
+  font-size: 12px; color: var(--ink-2); letter-spacing: .01em;
+  padding-left: 12px; border-left: 1px solid var(--line-2);
+}
+
+.status { display: flex; align-items: center; gap: 2px; }
+.status__cell {
+  display: flex; align-items: baseline; gap: 7px;
+  padding: 0 13px; border-left: 1px solid var(--line);
+}
+/* §12 vibrancy：压在玻璃上的文字不能用浅灰 */
+.status__cell em {
+  font-style: normal; font-size: 11px; color: var(--ink-3);
+  letter-spacing: .11em;
+}
+.status__cell b {
+  font-family: var(--sans); font-weight: 400; font-size: 12.5px;
+  color: var(--ink); max-width: 170px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+.state {
+  display: flex; align-items: center; gap: 8px;
+  margin-left: 9px; padding: 6px 13px 6px 11px;
+  border-radius: 999px; background: rgba(255, 255, 255, .55);
+}
+/* 状态是"标签"不是"标题" → 走系统字体。
+   站酷是单字重，系统字体有字重梯度，用 600 把原来那份存在感补回来。 */
+.state b {
+  font-family: var(--sans); font-weight: 600;
+  font-size: 12.5px; letter-spacing: .01em; color: var(--ink-2);
+}
+.state .dot {
+  width: 7px; height: 7px; border-radius: 50%; background: var(--ink-3);
+  transition: background .2s, box-shadow .2s;
+}
+.state.is-running { background: var(--tint-yellow); }
+.state.is-running .dot { background: var(--yellow); box-shadow: 0 0 0 3px rgba(255, 204, 20, .40); animation: pulse 1.4s ease-in-out infinite; }
+.state.is-running b { color: var(--ink); }
+.state.is-done { background: var(--tint-blue); }
+.state.is-done .dot { background: var(--blue); }
+.state.is-done b { color: var(--blue); }
+.state.is-failed { background: var(--danger-bg); }
+.state.is-failed .dot { background: var(--danger); }
+.state.is-failed b { color: var(--danger); }
+
+/* ─────────────────── 骨架 ─────────────────── */
+
+.layout {
+  position: relative; z-index: 1;
+  display: grid; grid-template-columns: var(--rail) minmax(0, 1fr);
+  gap: 16px;
+  padding: var(--pad) var(--pad-x);
+  max-width: 1760px; margin: 0 auto;
+  align-items: start;
+}
+
+.rail {
+  position: sticky; top: calc(var(--topbar-top) + var(--topbar-h) + var(--pad));
+  display: flex; flex-direction: column; gap: 12px;
+  /* 定高（不是 max-height）：余量要能分下去，否则底部留一个空洞 */
+  height: calc(100vh - var(--topbar-top) - var(--topbar-h) - var(--pad) * 2);
+  overflow-y: auto;
+  padding-right: 4px;
+}
+.rail > .card { flex: none; display: flex; flex-direction: column; }
+/* 余量按 0.35 : 1 分给「进料」和「配置」——投放区长成真正的投放区、
+   表单行距变宽。收缩因子 0：窗口变矮时保持自然高度，交给滚动兜底。 */
+.rail > .card:nth-child(1) { flex: 0.35 0 auto; }
+.rail > .card:nth-child(2) { flex: 1 0 auto; }
+/* 纵向排：投放区在上、诊断面板在下。
+   原来这里是 display:flex（默认横排）。空状态时 body 里只有投放区一个
+   子元素，横排照样铺满，所以看不出问题；一旦解析出诊断面板，两个子元素
+   就在横排里抢宽度——投放区被压成一条窄柱，中文每行只排一个字。
+   教训：只截空状态验证是不够的。 */
+.rail > .card:nth-child(1) > .card__body {
+  flex: 1; display: flex; flex-direction: column;
+}
+/* grow 但不 shrink：诊断面板出现时投放区保持自然高度，不被压扁 */
+.rail > .card:nth-child(1) .dropzone { flex: 1 0 auto; }
+.rail > .card:nth-child(2) > .card__body {
+  flex: 1; display: flex; flex-direction: column; justify-content: space-between;
+}
+.rail > .card:nth-child(2) > .card__body > :last-child { margin-bottom: 0; }
+
+/* ─────────────────── 玻璃面板 ─────────────────── */
+
+.card {
+  position: relative;
+  background: var(--glass);
+  backdrop-filter: var(--blur);
+  -webkit-backdrop-filter: var(--blur);
+  border-radius: var(--r);
+  overflow: hidden;
+  box-shadow:
+    /* 四层叠出"玻璃有厚度"，这是 iOS 材质最像的地方：
+       顶棱镜面高光 → 底棱内阴影(厚度) → 外廓细描边 → 顶部内辉光 */
+    inset 0 1px 0 rgba(255, 255, 255, .98),
+    inset 0 -1px 0 rgba(22, 32, 63, .05),
+    inset 0 0 0 1px rgba(22, 32, 63, .08),
+    inset 0 15px 24px -18px rgba(255, 255, 255, 1),
+    var(--shadow);
+  animation: rise .55s var(--spring-soft) both;
+}
+.card:nth-child(1) { animation-delay: .04s; }
+.card:nth-child(2) { animation-delay: .1s; }
+.card:nth-child(3) { animation-delay: .16s; }
+
+/* 原来是渐变描边做棱边折射。去掉渐变后改成实色内描边——
+   平坦底色上，面板靠"一圈细描边 + 柔投影"立足。 */
+
+/* 卡片头不做满色彩条（那显廉价），只用一条发丝分割线 */
+.card__head {
+  display: flex; align-items: center; gap: 10px;
+  margin: 0; padding: 15px 18px 13px;
+  font-family: var(--display); font-size: 14px; letter-spacing: .01em;
+  color: var(--ink);
+  border-bottom: 1px solid var(--line);
+}
+.card__head .num {
+  display: grid; place-items: center; flex: none;
+  width: 22px; height: 22px; border-radius: 50%;
+  font-family: var(--sans); font-variant-numeric: tabular-nums;
+  font-weight: 600; font-size: 10px; letter-spacing: 0;
+  color: var(--ink); background: var(--yellow);
+  box-shadow: 0 1px 3px rgba(180, 140, 0, .32);
+}
+.card__head .en {
+  margin-left: auto;
+  font-family: var(--sans); font-size: 9.5px; font-weight: 500;
+  letter-spacing: .14em; text-transform: uppercase; color: var(--ink-3);
+}
+.card__body { padding: 15px 18px 17px; }
+
+/* ─────────────────── 投放区 ─────────────────── */
+
+.dropzone {
+  display: grid; grid-template-columns: auto 1fr;
+  align-items: center; column-gap: 14px;
+  border: 1.5px dashed rgba(180, 140, 0, .55);
+  border-radius: var(--r-sm);
+  background: rgba(255, 204, 20, .28);
+  padding: 14px 16px;
+  cursor: pointer; text-align: left;
+  transition: border-color .16s, background .16s, box-shadow .16s,
+              transform .34s var(--spring-snap);
+  outline: none;
+}
+.dropzone:hover, .dropzone:focus-visible {
+  border-color: rgba(180, 140, 0, .8); background: rgba(255, 204, 20, .42);
+  box-shadow: 0 0 0 4px rgba(255, 204, 20, .22);
+}
+.dropzone.is-over {
+  border-color: var(--blue); background: rgba(18, 70, 255, .14);
+  box-shadow: 0 0 0 4px var(--blue-ring);
+}
+/* SF Symbols 风格图标，跨两行文字。原来是用 CSS 拼边框箭头画出来的，
+   换成 SVG 后才对得上 iOS 的笔画粗细，也才能跟文字同色联动。 */
+.dropzone__icon {
+  grid-row: span 2;
+  display: grid; place-items: center;
+  width: 32px; height: 32px;
+  border-radius: var(--r-xs);
+  background: rgba(180, 140, 0, .16);
+  color: #a8842a;
+  transition: background .16s, color .16s;
+}
+.dropzone__icon svg { width: 19px; height: 19px; }
+.dropzone:hover .dropzone__icon,
+.dropzone.is-over .dropzone__icon { background: rgba(180, 140, 0, .28); color: var(--ink); }
+
+.dropzone__text { margin: 0 0 3px; font-size: 13px; color: var(--ink); }
+.dropzone__hint {
+  margin: 0; font-family: var(--mono); font-size: 10px;
+  color: #7d6620; letter-spacing: .01em;
+}
+
+.alert {
+  margin: 14px 0 0; padding: 11px 14px; font-size: 12.5px;
+  border-radius: var(--r-sm);
+  border-left: 3px solid var(--danger); background: var(--danger-bg);
+  color: #9d2130;
+}
+
+/* ─────────────────── 诊断 ─────────────────── */
+
+.diag { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); }
+
+.kv {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 14px; padding: 7px 0;
+}
+.kv + .kv { border-top: 1px dotted var(--line); }
+.kv span { font-size: 12px; color: var(--ink-3); white-space: nowrap; }
+.kv b {
+  font-weight: 400; font-size: 12.5px; color: var(--ink);
+  text-align: right; overflow: hidden; text-overflow: ellipsis;
+}
+.kv b.num { color: var(--blue); font-weight: 600; }
+
+.sub {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 9px;
+  margin: 16px 0 9px;
+  font-family: var(--sans); font-size: 10px; font-weight: 400;
+  letter-spacing: .05em; text-transform: uppercase; color: var(--ink-3);
+}
+.sub::before {
+  content: ""; flex: none; align-self: center;
+  width: 13px; height: 3px; border-radius: 2px; background: var(--yellow);
+}
+.sub__note {
+  flex-basis: 100%; font-family: var(--sans); font-size: 11px;
+  letter-spacing: 0; text-transform: none; color: var(--ink-3); line-height: 1.5;
+}
+
+.speakers { display: flex; flex-wrap: wrap; gap: 7px; }
+.speaker {
+  appearance: none; font-family: var(--sans); font-size: 12.5px;
+  border: 1px solid rgba(22, 32, 63, .14); background: rgba(255, 255, 255, .62);
+  color: var(--ink-2); padding: 5px 13px; border-radius: 999px; cursor: pointer;
+  transition: border-color .14s, color .14s, background .14s,
+              transform .34s var(--spring-snap);
+}
+.speaker:hover { border-color: var(--blue); color: var(--blue); background: var(--tint-blue); }
+.speaker b { font-weight: 600; color: var(--ink); }
+.speaker:hover b { color: var(--blue); }
+.speaker span { color: var(--ink-3); }
+
+.bars { display: flex; flex-direction: column; gap: 9px; }
+.bar { display: grid; grid-template-columns: 1fr 46px; align-items: center; gap: 10px; }
+.bar__name {
+  display: flex; align-items: center; gap: 8px; min-width: 0;
+  font-size: 12px; color: var(--ink-3);
+}
+.bar__name > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bar__track {
+  flex: 1; min-width: 20px; height: 6px;
+  background: rgba(22, 32, 63, .10); border-radius: 3px;
+  position: relative; overflow: hidden;
+}
+.bar__fill {
+  position: absolute; inset: 0 auto 0 0;
+  background: rgba(18, 70, 255, .32);
+  border-radius: 3px; transition: width .55s var(--spring-soft);
+}
+.bar--hit .bar__name { color: var(--ink-2); }
+.bar--hit .bar__fill { background: var(--blue); }
+.bar--used .bar__name > span:first-child { color: var(--ink); font-weight: 600; }
+.bar__used {
+  font-family: var(--sans); font-style: normal; font-size: 10px;
+  letter-spacing: .03em; color: var(--ink); background: var(--yellow);
+  padding: 2px 8px; border-radius: 999px; white-space: nowrap;
+}
+.bar__n {
+  font-family: var(--sans); font-variant-numeric: tabular-nums;
+  font-size: 11.5px; text-align: right; color: var(--ink-2);
+}
+
+/* ─────────────────── 表单 ─────────────────── */
+
+.field { display: block; margin-bottom: 11px; }
+.field__k {
+  display: flex; align-items: baseline; gap: 7px; margin-bottom: 6px;
+  font-size: 11.5px; color: var(--ink-3); letter-spacing: .03em;
+  line-height: 1.35;
+}
+.field__k em { font-style: normal; font-size: 10.5px; color: var(--ink-3); }
+.field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
+.field-row--ratio { grid-template-columns: 40% 1fr; }
+
+input[type="text"], input[type="password"], select {
+  width: 100%; height: 36px; padding: 0 12px;
+  font-family: var(--sans); font-size: 12.5px; color: var(--ink);
+  background: var(--glass-solid);
+  border: 1px solid rgba(22, 32, 63, .16); border-radius: var(--r-sm);
+  transition: border-color .15s, box-shadow .15s, background .15s;
+}
+select { font-size: 13px; }
+input::placeholder { color: var(--ink-3); opacity: .78; }
+input:focus, select:focus {
+  outline: none; border-color: var(--blue); background: rgba(255, 255, 255, .92);
+  box-shadow: 0 0 0 4px var(--blue-ring);
+}
+
+/* 分段控件：和标签栏同一套语言——一个白滑块滑过去，不是每项各自染色。
+   滑块是 .seg::before，靠 :has() 驱动 translateX。 */
+.seg {
+  position: relative;
+  display: grid; grid-template-columns: 1fr 1fr;
+  padding: 3px; margin-bottom: 8px;
+  background: rgba(22, 32, 63, .07); border-radius: 999px;
+}
+.seg::before {
+  content: ""; position: absolute; z-index: 0;
+  top: 3px; bottom: 3px; left: 3px;
+  width: calc((100% - 6px) / 2);
+  border-radius: 999px;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(22, 32, 63, .16), 0 0 0 .5px rgba(22, 32, 63, .04);
+  transition: transform .34s var(--spring-snap);
+}
+.seg:has(input[value="llm"]:checked)::before { transform: translateX(100%); }
+
+.seg__opt { position: relative; z-index: 1; }
+.seg__opt input { position: absolute; opacity: 0; pointer-events: none; }
+.seg__opt > span {
+  display: block; padding: 6px 8px; text-align: center;
+  font-size: 12.5px; color: var(--ink-2); border-radius: 999px;
+  cursor: pointer;
+  transition: color .2s, transform .34s var(--spring-snap);
+}
+.seg__opt:hover > span { color: var(--ink); }
+.seg__opt input:checked + span { color: var(--blue); font-weight: 600; }
+.seg__opt input:focus-visible + span { box-shadow: 0 0 0 3px var(--blue-ring); }
+
+.seg__hint {
+  margin: 0 0 9px; padding: 0 1px;
+  font-size: 11px; color: var(--ink-3); line-height: 1.5;
+}
+.seg__hint--offline, .seg__hint--llm { display: none; }
+.seg:has(input[value="offline"]:checked) ~ .seg__hint--offline { display: block; }
+.seg:has(input[value="llm"]:checked) ~ .seg__hint--llm { display: block; }
+
+.llm-config {
+  padding: 13px 14px 1px; margin-bottom: 11px;
+  background: rgba(255, 255, 255, .52); border-radius: var(--r-sm);
+  box-shadow: inset 3px 0 0 var(--yellow);
+}
+
+.check-row { display: flex; flex-wrap: wrap; gap: 3px 18px; }
+.check-row .check { margin-bottom: 0; }
+
+.check { display: flex; align-items: center; gap: 9px; margin-bottom: 6px; cursor: pointer; }
+.check input {
+  appearance: none; flex: none; margin: 0;
+  width: 15px; height: 15px; border-radius: 5px;
+  border: 1.5px solid rgba(22, 32, 63, .22); background: rgba(255, 255, 255, .8);
+  position: relative; transition: border-color .15s, background .15s;
+}
+.check input:checked { border-color: var(--blue); background: var(--blue); }
+.check input:checked::after {
+  content: ""; position: absolute; left: 4px; top: 1px;
+  width: 3.5px; height: 7px; border: solid #fff;
+  border-width: 0 2px 2px 0; transform: rotate(42deg);
+}
+.check span { font-size: 12px; color: var(--ink-2); }
+.check em { font-style: normal; font-size: 11px; color: var(--ink-3); }
+
+/* ─────────────────── 按钮 ─────────────────── */
+
+.btn {
+  /* 图标 + 文字居中一行——iOS 的按钮都是这个结构，
+     居中不靠 text-align，靠 flex，图标才会跟着一起居中 */
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  width: 100%; padding: 11px 16px 12px;
+  font-family: var(--display); font-size: 14px; letter-spacing: .06em;
+  text-decoration: none;
+  border-radius: var(--r-sm); cursor: pointer;
+  border: 1px solid transparent;
+  transition: background .16s, color .16s, border-color .16s, box-shadow .16s,
+              transform .34s var(--spring-snap);
+}
+/* 主按钮 = 黄底 + 墨蓝字（11.2:1）。§12：颜色要落在实色层上，
+   所以按钮是不透明的，不参与玻璃。 */
+.btn--go {
+  color: var(--ink);
+  background: var(--yellow);
+  box-shadow: 0 1px 0 rgba(170, 132, 0, .30), 0 6px 18px rgba(255, 204, 20, .38);
+}
+.btn--go:hover:not(:disabled) {
+  background: var(--yellow-2);
+  box-shadow: 0 6px 0 -4px rgba(170, 132, 0, .30), 0 10px 26px rgba(255, 204, 20, .50);
+  transform: translateY(-1px);
+}
+.btn:disabled { cursor: not-allowed; }
+.btn--go:disabled {
+  background: rgba(255, 255, 255, .55); color: var(--ink-3);
+  border-color: var(--line-2); box-shadow: none;
+}
+.btn--ghost {
+  color: var(--blue); background: rgba(255, 255, 255, .62);
+  border-color: rgba(18, 70, 255, .30); font-size: 13.5px;
+}
+.btn--ghost:hover { background: var(--tint-blue); border-color: var(--blue); }
+
+.btn__meta {
+  font-family: var(--mono); font-size: 11px; letter-spacing: 0;
+  color: var(--ink-3); white-space: nowrap;
+}
+.btn--go:disabled .btn__meta, .btn--ghost .btn__meta { color: var(--ink-3); }
+
+.artifact { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--line); }
+.artifact .field { margin: 15px 0 0; }
+
+/* ─────────────────── 右栏（玻璃面板）─────────────────── */
+
+.workspace {
+  position: relative;
+  height: calc(100vh - var(--topbar-top) - var(--topbar-h) - var(--pad) * 2);
+  background: var(--glass-pane);
+  backdrop-filter: var(--blur);
+  -webkit-backdrop-filter: var(--blur);
+  border-radius: var(--r);
+  overflow: hidden;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, .98),
+    inset 0 -1px 0 rgba(22, 32, 63, .05),
+    inset 0 0 0 1px rgba(22, 32, 63, .08),
+    inset 0 18px 28px -20px rgba(255, 255, 255, 1),
+    var(--shadow-lg);
+  animation: rise .55s var(--spring-soft) .08s both;
+}
+
+/* ── 标签栏：浮在内容之上的一层玻璃 ──────────────────────────
+   这是整个界面里模糊真正"被看见"的地方——日志从它底下滚过去，
+   在玻璃背面糊成一片。 */
+/* iOS 不是"给选中项染色"，而是**一个药丸在等宽的段之间滑过去**。
+   滑动本身就是反馈：你能看见自己从哪来、到哪去（skill §7 空间一致性）。
+   等宽是前提——只有每格宽度一致，translateX(百分比) 才能对上位置。 */
+.tabs {
+  position: absolute; z-index: 2;
+  top: 12px; left: 12px; right: 12px;
+  display: grid; grid-template-columns: repeat(4, 1fr);
+  padding: 5px;
+  border-radius: 999px;
+  background: rgba(22, 32, 63, .05);
+  backdrop-filter: var(--blur-thin);
+  -webkit-backdrop-filter: var(--blur-thin);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, .85),
+    inset 0 0 0 1px rgba(22, 32, 63, .09),
+    0 6px 20px rgba(22, 32, 63, .10);
+}
+/* 滑块。用 transform 而不是改 left：只走合成器，不触发重排（§11） */
+.tabs::before {
+  content: ""; position: absolute; z-index: 0;
+  top: 5px; bottom: 5px; left: 5px;
+  width: calc((100% - 10px) / 4);
+  border-radius: 999px;
+  background: #fff;
+  box-shadow: 0 2px 6px rgba(22, 32, 63, .16), 0 0 0 .5px rgba(22, 32, 63, .05);
+  transition: transform .42s var(--spring-soft);
+}
+.tabs:has(.tab:nth-child(1).is-active)::before { transform: translateX(0); }
+.tabs:has(.tab:nth-child(2).is-active)::before { transform: translateX(100%); }
+.tabs:has(.tab:nth-child(3).is-active)::before { transform: translateX(200%); }
+.tabs:has(.tab:nth-child(4).is-active)::before { transform: translateX(300%); }
+
+.tab {
+  appearance: none; border: 0; cursor: pointer;
+  position: relative; z-index: 1;
+  display: flex; align-items: center; justify-content: center; gap: 7px;
+  padding: 8px 6px; white-space: nowrap;
+  font-family: var(--display); font-size: 13.5px; letter-spacing: .005em;
+  color: var(--ink-2);
+  background: transparent; border-radius: 999px;
+  transition: color .2s, transform .34s var(--spring-snap);
+}
+/* 浮动玻璃只有 .5 透明，禁用态别再叠加透明度——叠完只剩 2:1 */
+.tab:disabled { color: rgba(57, 65, 92, .45); cursor: default; }
+.tab:not(.is-active):hover:not(:disabled) { color: var(--ink); }
+/* 激活项不填色，只把文字变蓝——它坐在已经滑过来的白滑块上 */
+.tab.is-active { color: var(--blue); }
+
+.views { position: absolute; inset: 0; }
+.view { display: none; }
+.view.is-active {
+  display: block; height: 100%; overflow-y: auto;
+  /* 上内边距让开浮动的标签栏，内容才能从它底下穿过去 */
+  padding: calc(var(--tabs-h) + 14px) 30px 36px;
+  animation: fade .22s ease both;
+}
+
+.rail::-webkit-scrollbar, .view.is-active::-webkit-scrollbar { width: 10px; }
+.rail::-webkit-scrollbar-track, .view.is-active::-webkit-scrollbar-track { background: transparent; }
+.rail::-webkit-scrollbar-thumb, .view.is-active::-webkit-scrollbar-thumb {
+  background: rgba(22, 32, 63, .16); border-radius: 6px; border: 3px solid transparent;
+  background-clip: content-box;
+}
+.rail::-webkit-scrollbar-thumb:hover, .view.is-active::-webkit-scrollbar-thumb:hover {
+  background: rgba(22, 32, 63, .28); background-clip: content-box;
+}
+
+/* ─────────────────── 空状态 ─────────────────── */
+
+.placeholder {
+  display: flex; flex-direction: column; align-items: center;
+  justify-content: center; gap: 12px;
+  min-height: 100%; text-align: center;
+  animation: fade .35s ease both;
+}
+.placeholder__box {
+  font-family: var(--sans); font-size: 12.5px; letter-spacing: .08em;
+  color: var(--blue);
+  border: 1.5px dashed rgba(18, 70, 255, .35); border-radius: var(--r-sm);
+  background: rgba(255, 255, 255, .55);
+  padding: 18px 30px; margin-bottom: 8px;
+}
+.placeholder__title {
+  margin: 0; font-family: var(--display); font-size: 18px;
+  letter-spacing: -.008em; line-height: 1.3; color: var(--ink);
+}
+.placeholder__hint {
+  margin: 0; font-size: 12.5px; color: var(--ink-3); line-height: 1.9;
+}
+
+/* ─────────────────── 日志 ─────────────────── */
+
+.log {
+  font-family: var(--sans); font-size: 13px; line-height: 1.75;
+  white-space: pre-wrap; word-break: break-word; color: var(--ink-2);
+}
+.log:empty { display: none; }
+
+.log-step {
+  display: flex; align-items: center; gap: 10px;
+  margin: 26px 0 12px;
+  font-family: var(--display); font-size: 15px; letter-spacing: -.002em;
+  color: var(--ink);
+}
+.log-step:first-child { margin-top: 0; }
+.log-step .n {
+  display: grid; place-items: center; flex: none;
+  width: 22px; height: 22px; border-radius: 50%;
+  font-family: var(--sans); font-variant-numeric: tabular-nums;
+  font-size: 10px; font-weight: 600;
+  color: var(--ink); background: var(--yellow); letter-spacing: 0;
+  box-shadow: 0 1px 3px rgba(180, 140, 0, .32);
+}
+.log-bullet { color: var(--ink); }
+.log-bad { color: var(--danger); font-weight: 600; }
+.log-dim { color: var(--ink-3); }
+/* LLM 蒸馏的进度行（`· 第 N/M 批 · 人格分析…`）。
+   用品牌蓝而不是红：它是"正在跑"的状态信息，不是待确认的问题。
+   红色只留给真正的失败和校验问题。 */
+.log-prog { color: var(--blue); }
+
+/* ─────────────────── 校验 ─────────────────── */
+
+.verify { position: relative; max-width: 900px; }
+
+.stamp {
+  display: inline-flex; flex-direction: column; align-items: center;
+  justify-content: center; gap: 3px;
+  min-width: 152px; padding: 20px 26px; margin: 4px 0 24px;
+  border: 2px solid var(--danger); border-radius: var(--r);
+  background: var(--danger-bg);
+  animation: stamp .45s var(--spring-sheet) both;
+}
+/* 全过 = 黄边淡黄底 + 墨蓝字（大面积用淡、小面积用纯） */
+.stamp--ok {
+  border-color: var(--yellow); background: rgba(255, 204, 20, .30);
+  box-shadow: 0 6px 20px rgba(255, 204, 20, .35);
+}
+.stamp__big {
+  font-family: var(--display); font-size: 34px; line-height: 1;
+  color: var(--danger);
+}
+.stamp--ok .stamp__big { color: var(--ink); font-size: 25px; }
+.stamp__small { font-size: 11px; letter-spacing: .16em; color: var(--danger); }
+.stamp--ok .stamp__small { color: var(--ink-2); }
+
+.verify__line { margin: 0 0 7px; font-size: 13.5px; color: var(--ink-2); }
+.verify__line b {
+  font-family: var(--sans); font-variant-numeric: tabular-nums;
+  color: var(--blue); font-weight: 600;
+}
+
+.verify__label {
+  margin: 30px 0 14px; padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+  font-family: var(--sans); font-size: 10.5px; font-weight: 400;
+  letter-spacing: .06em; text-transform: uppercase; color: var(--ink-3);
+}
+
+.finding {
+  padding: 14px 0 14px 16px; margin-bottom: 16px;
+  border-left: 3px solid var(--danger);
+}
+.finding__head { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+.finding__sec {
+  font-family: var(--sans); font-size: 11px; letter-spacing: .03em;
+  color: var(--ink-3); background: rgba(255, 255, 255, .62);
+  padding: 2px 10px; border-radius: 999px;
+}
+.finding__claim {
+  font-family: var(--sans); font-size: 13px; color: var(--ink);
+  word-break: break-word;
+}
+.finding__note { margin: 7px 0 0; font-size: 12.5px; color: var(--danger); }
+.finding__near { margin: 7px 0 0; font-size: 12.5px; color: var(--ink-3); }
+.finding__near code { font-family: var(--sans); color: var(--blue); }
+
+/* ─────────────────── Markdown ─────────────────── */
+
+.markdown { font-size: 14px; line-height: 1.78; max-width: 900px; color: var(--ink); }
+.markdown h1 {
+  margin: 0 0 10px; font-family: var(--display); font-size: 26px;
+  /* §15：字距必须随字号变——大字号要负字距，行高随字号反向收紧 */
+  letter-spacing: -.015em; line-height: 1.2; color: var(--ink);
+}
+.markdown h2 {
+  position: relative;
+  margin: 30px 0 13px; padding-left: 15px;
+  font-family: var(--display); font-size: 17px; letter-spacing: -.005em;
+  line-height: 1.35; color: var(--ink);
+}
+.markdown h2::before {
+  content: ""; position: absolute; left: 0; top: .2em;
+  width: 4px; height: 1.05em; border-radius: 2px; background: var(--yellow);
+}
+.markdown ul { margin: 0; padding: 0; list-style: none; }
+.markdown li {
+  position: relative; padding-left: 20px; margin-bottom: 8px; color: var(--ink);
+}
+.markdown li::before {
+  content: ""; position: absolute; left: 5px; top: .72em;
+  width: 5px; height: 5px; border-radius: 50%;
+  background: rgba(18, 70, 255, .42);
+}
+.markdown blockquote {
+  margin: 0 0 16px; padding: 14px 18px;
+  border-radius: var(--r-sm); background: rgba(255, 255, 255, .55);
+  box-shadow: inset 3px 0 0 rgba(22, 32, 63, .16);
+  color: var(--ink-2); font-size: 13.5px;
+}
+.markdown code {
+  font-family: var(--mono); font-size: .88em;
+  background: rgba(18, 70, 255, .10); color: var(--blue-2);
+  padding: 2px 7px; border-radius: 6px;
+}
+.markdown .frontmatter {
+  font-family: var(--sans); font-size: 12.5px; color: var(--ink-2);
+  background: rgba(255, 255, 255, .55); border-radius: var(--r-sm);
+  padding: 15px 17px; margin-bottom: 22px;
+  white-space: pre-wrap; line-height: 1.8;
+}
+/* 存疑标注 = 荧光笔划重点，语义上是"重点"不是"错误" */
+.markdown .flag {
+  color: var(--ink); background: #ffe9a3;
+  border-radius: 5px; padding: 1.5px 6px;
+}
+.markdown p { margin: 0 0 12px; }
+
+/* ─────────────────── 按压反馈（apple-design §1 / §10）───────────────────
+   反馈必须发生在 pointer-down 的同一帧。进入 90ms 保证"立刻"，
+   松手回弹才交给弹簧；整行的大目标缩放会晃，改用即时变暗。 */
+.tab:active:not(:disabled) { transform: scale(.96); transition: transform var(--press); }
+.speaker:active { transform: scale(.95); transition: transform var(--press); }
+.seg__opt > span:active { transform: scale(.97); transition: transform var(--press); }
+.dropzone:active { transform: scale(.99); transition: transform var(--press); }
+.btn:active:not(:disabled) {
+  transform: scale(.97);
+  transition: transform var(--press), box-shadow var(--press);
+}
+.btn--go:active:not(:disabled) {
+  box-shadow: 0 0 0 rgba(170, 132, 0, .30), 0 3px 10px rgba(255, 204, 20, .35);
+}
+.mode:active, .check:active { filter: brightness(.96); }
+
+/* ─────────────────── 动画 ─────────────────── */
+
+@keyframes rise { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+@keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
+@keyframes stamp { from { opacity: 0; transform: scale(.88); } to { opacity: 1; transform: none; } }
+
+/* ─────────────────── 无障碍 ─────────────────── */
+
+/* §14：减弱动效不是"全部关掉"，而是换成非前庭的等价反馈 */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+  .card, .workspace, .placeholder, .view.is-active, .stamp, .topbar {
+    animation: fade 160ms ease both !important;
+  }
+  .state.is-running .dot { animation: pulse 2.4s ease-in-out infinite !important; }
+  .btn:active:not(:disabled), .tab:active:not(:disabled),
+  .speaker:active, .seg__opt > span:active, .dropzone:active { transform: none !important; }
+  .btn--go:hover:not(:disabled) { transform: none; }
+}
+
+/* 毛玻璃换成实底——文字压在变动的背景上会糊 */
+@media (prefers-reduced-transparency: reduce) {
+  .topbar, .tabs { background: #fff; backdrop-filter: none; -webkit-backdrop-filter: none; }
+  .card, .workspace { background: #fff; backdrop-filter: none; -webkit-backdrop-filter: none; }
+  input[type="text"], input[type="password"], select { background: #fff; }
+  .seg__opt input:checked + span { background: #fff; }
+}
+
+/* 更高对比度：去投影、改明确描边 */
+@media (prefers-contrast: more) {
+  .topbar, .tabs, .card, .workspace {
+    background: #fff; backdrop-filter: none; -webkit-backdrop-filter: none;
+  }
+  .card, .workspace, .tabs {
+    box-shadow: none; border: 1px solid var(--line-2);
+  }
+  .tab.is-active { box-shadow: inset 0 0 0 1.5px var(--blue); }
+  .btn--ghost { border-width: 2px; }
+  .kv span, .field__k, .sub, .mode__desc, .placeholder__hint,
+  .seg__hint, .dropzone__hint { color: var(--ink-2); }
+}
+
+/* ─────────────────── 响应式 ─────────────────── */
+
+/* 矮屏（1366×768 这类）再收紧一档。
+   这组值是逐像素实测调出来的，不是估的——基线留白下左栏会溢出 8px，
+   必须压到这里才放得下。改动前请重跑 fit 探针（见 README）。 */
+@media (max-height: 840px) and (min-width: 1181px) {
+  .rail { gap: 9px; }
+  .card__head { padding: 8px 12px 7px; }
+  .card__body { padding: 8px 12px 9px; }
+  .field { margin-bottom: 5px; }
+  .sub { margin: 8px 0 4px; }
+  .check { margin-bottom: 3px; }
+  .seg { margin-bottom: 4px; }
+  .seg__hint { margin-bottom: 5px; font-size: 10.5px; }
+  .dropzone { padding: 9px 12px; }
+  input[type="text"], input[type="password"], select { height: 32px; }
+  .btn { padding: 8px 16px 9px; }
+  .seg__opt > span { padding: 5px 8px; }
+  :root { --tabs-h: 50px; }
+}
+
+@media (max-width: 1180px) {
+  .layout { grid-template-columns: 1fr; }
+  .rail { position: static; height: auto; max-height: none; overflow: visible; }
+  .workspace { height: auto; min-height: 68vh; }
+  .view.is-active { height: auto; max-height: none; overflow: visible; }
+  .placeholder { min-height: 40vh; }
+}
+
+@media (max-width: 680px) {
+  .topbar { height: auto; padding: 10px 16px; flex-wrap: wrap; gap: 12px; border-radius: 24px; }
+  .brand__sub { display: none; }
+  .status__cell em { display: none; }
+  .status__cell { padding: 0 10px; }
+  .field-row { grid-template-columns: 1fr; }
+  .view.is-active { padding: calc(var(--tabs-h) + 10px) 16px 28px; }
+  /* 窄屏：图标 + 4 等分放不下，去图标缩字号。
+     等宽结构保留，所以滑块照常工作。 */
+  .tab { font-size: 12px; gap: 0; padding: 8px 2px; }
+  .tab .ico { display: none; }
+}

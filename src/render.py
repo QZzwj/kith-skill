@@ -1,8 +1,15 @@
 from .analysis import stats_markdown
 from .models import Stats
+from .relation import title_for
+
+#: memory.md 的章节顺序。字段名固定，**显示标题按关系类型换**——
+#: 同事记录里的「甜蜜瞬间」应该是「配合默契的瞬间」，不然读起来很滑稽。
+MEMORY_ORDER = ("关系时间线", "一起去过的地方", "inside_jokes", "争吵模式",
+                "甜蜜瞬间", "称呼与专属用语")
 
 
-def render_skill_md(display: str, slug: str, desc: str, persona: dict, stats: Stats) -> str:
+def render_skill_md(display: str, slug: str, desc: str, persona: dict, stats: Stats,
+                    relation: str = "") -> str:
     def bullet(key: str, fallback: str) -> str:
         items = persona.get(key) or []
         if not items:
@@ -27,6 +34,7 @@ description: 用 {display} 的方式说话的本地人设技能。当用户想�
 
 ## 身份与背景
 {bullet('身份', f'{display} 的基本信息')}
+{f'- 关系定位：{relation}。措辞要按这个关系来，不要越界。' if relation else ''}
 
 ## 说话风格
 {bullet('说话风格', '句式与语气特点')}
@@ -50,21 +58,20 @@ description: 用 {display} 的方式说话的本地人设技能。当用户想�
 """
 
 
-def render_memory_md(display: str, memory: dict, stats: Stats, target: str) -> str:
-    def section(title: str, key: str) -> str:
+def render_memory_md(display: str, memory: dict, stats: Stats, target: str,
+                     relation: str = "朋友") -> str:
+    def section(key: str) -> str:
+        title = title_for(relation, key)
         items = memory.get(key) or []
         if not items:
-            return f"## {title}\n\n（聊天记录里没有找到相关内容）\n"
-        return f"## {title}\n\n" + "\n".join(f"- {x}" for x in items) + "\n"
+            return f"## {title}\n\n（聊天记录里没有找到相关内容）\n\n"
+        return f"## {title}\n\n" + "\n".join(f"- {x}" for x in items) + "\n\n"
 
     return f"""# {display} · 关系记忆（Part A）
 
-{section('关系时间线', '关系时间线')}
-{section('一起去过的地方', '一起去过的地方')}
-{section('inside jokes', 'inside_jokes')}
-{section('争吵模式', '争吵模式')}
-{section('甜蜜瞬间', '甜蜜瞬间')}
-{section('称呼与专属用语', '称呼与专属用语')}
+> 关系类型：{relation}
+
+{"".join(section(key) for key in MEMORY_ORDER)}
 {stats_markdown(stats, target)}
 """
 

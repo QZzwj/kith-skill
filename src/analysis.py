@@ -26,6 +26,8 @@ def analyse(msgs: list[Msg], target: str) -> Stats:
                 st.conflict_hits[word] += 1
         for seg in SENTENCE_SPLIT.split(m.text):
             seg = seg.strip()
+            if "[" in seg or "]" in seg:
+                continue  # [图片] [表情] 这类占位不是口头禅
             if 2 <= len(seg) <= 8 and seg not in STOP_PHRASES and not seg.isdigit():
                 st.phrases[seg] += 1
 

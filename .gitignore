@@ -6,3 +6,7 @@ __pycache__/
 
 # JSON 文件
 *.json
+
+# 杂项
+zx/
+out/
