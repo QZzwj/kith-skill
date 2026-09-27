@@ -511,6 +511,32 @@ input:focus, select:focus {
   box-shadow: 0 0 0 4px var(--blue-ring);
 }
 
+/* 「可选 + 可填」的合体框：取值靠 input + datalist，▾ 只负责摊开候选。
+   箭头绝对定位压在输入框里，所以高亮高度和别的输入框仍然一致（矮屏也不掉队）。*/
+.combo { position: relative; display: block; }
+.combo input[type="text"] { padding-right: 30px; }
+.combo__pick {
+  position: absolute; top: 0; right: 0; width: 30px; height: 100%;
+  display: flex; align-items: center; justify-content: center;
+  appearance: none; border: 0; background: none; cursor: pointer;
+  color: var(--ink-3); transition: color .14s;
+}
+.combo__pick::before {
+  content: ""; width: 7px; height: 7px; margin-top: -3px;
+  border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor;
+  transform: rotate(45deg);
+}
+.combo__pick:hover { color: var(--ink); }
+.combo__pick:focus-visible {
+  outline: none; color: var(--blue);
+  box-shadow: inset 0 0 0 2px var(--blue-ring); border-radius: var(--r-sm);
+}
+/* 新版 Chrome 会给带 list 的输入框自带一个下拉三角，和自绘的 ▾ 撞在一起就是"两个箭头"。
+   留自绘的那个：样式跟设计语言一致，交互也归 .combo__pick 管。
+   两条规则分开写——不认识的伪元素只会让**自己那条**失效，合在一条里会连累另一条。 */
+.combo input[list]::-webkit-calendar-picker-indicator { display: none; }
+.combo input[list]::-webkit-list-button { display: none; }
+
 /* 分段控件：和标签栏同一套语言——一个白滑块滑过去，不是每项各自染色。
    滑块是 .seg::before，靠 :has() 驱动 translateX。 */
 .seg {
@@ -619,6 +645,9 @@ input:focus, select:focus {
 .btn--go:disabled .btn__meta, .btn--ghost .btn__meta { color: var(--ink-3); }
 
 .artifact { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--line); }
+/* 下载 / 试聊是两个并列的次要动作，各占整行、之间留一道缝。
+   .btn 默认 width:100%，所以不用额外设宽度。 */
+.artifact .btn + .btn { margin-top: 9px; }
 .artifact .field { margin: 15px 0 0; }
 
 /* ─────────────────── 右栏（玻璃面板）─────────────────── */
@@ -649,7 +678,9 @@ input:focus, select:focus {
 .tabs {
   position: absolute; z-index: 2;
   top: 12px; left: 12px; right: 12px;
-  display: grid; grid-template-columns: repeat(4, 1fr);
+  /* 5 等分：运行日志 / 校验 / SKILL.md / 关系记忆 / 试聊。
+     格数变了，下面 ::before 的宽度和 translateX 步长要跟着改（百分比是相对滑块自身宽度）。 */
+  display: grid; grid-template-columns: repeat(5, 1fr);
   padding: 5px;
   border-radius: 999px;
   background: rgba(22, 32, 63, .05);
@@ -664,7 +695,7 @@ input:focus, select:focus {
 .tabs::before {
   content: ""; position: absolute; z-index: 0;
   top: 5px; bottom: 5px; left: 5px;
-  width: calc((100% - 10px) / 4);
+  width: calc((100% - 10px) / 5);
   border-radius: 999px;
   background: #fff;
   box-shadow: 0 2px 6px rgba(22, 32, 63, .16), 0 0 0 .5px rgba(22, 32, 63, .05);
@@ -674,6 +705,7 @@ input:focus, select:focus {
 .tabs:has(.tab:nth-child(2).is-active)::before { transform: translateX(100%); }
 .tabs:has(.tab:nth-child(3).is-active)::before { transform: translateX(200%); }
 .tabs:has(.tab:nth-child(4).is-active)::before { transform: translateX(300%); }
+.tabs:has(.tab:nth-child(5).is-active)::before { transform: translateX(400%); }
 
 .tab {
   appearance: none; border: 0; cursor: pointer;
@@ -693,6 +725,16 @@ input:focus, select:focus {
 
 .views { position: absolute; inset: 0; }
 .view { display: none; }
+
+/* 试聊视图：里面嵌的是同源的 /play?embed=1 页面。
+   不内联一份聊天实现，是因为它已经是一整页（含接口设置、重开、错误提示），
+   iframe 让它只有一份实现；代价是这里要把它自己的外框留白抹掉。
+
+   选择器必须比下面的 `.view.is-active` 更具体：那条规则在后面，写在同一个文件里
+   同权重会被它盖掉——留白抹不掉，iframe 就缩在中间一块，看着像嵌进来的外物。 */
+.views > .view--play.is-active { padding: 0; overflow: hidden; }
+.playframe { display: block; width: 100%; height: 100%; border: 0; }
+.view--play .placeholder { height: 100%; }
 .view.is-active {
   display: block; height: 100%; overflow-y: auto;
   /* 上内边距让开浮动的标签栏，内容才能从它底下穿过去 */
@@ -966,8 +1008,8 @@ input:focus, select:focus {
   .status__cell { padding: 0 10px; }
   .field-row { grid-template-columns: 1fr; }
   .view.is-active { padding: calc(var(--tabs-h) + 10px) 16px 28px; }
-  /* 窄屏：图标 + 4 等分放不下，去图标缩字号。
+  /* 窄屏：图标 + 5 等分放不下，去图标缩字号。
      等宽结构保留，所以滑块照常工作。 */
-  .tab { font-size: 12px; gap: 0; padding: 8px 2px; }
+  .tab { font-size: 11.5px; gap: 0; padding: 8px 1px; letter-spacing: 0; }
   .tab .ico { display: none; }
 }

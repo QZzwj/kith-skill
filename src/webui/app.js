@@ -97,41 +97,57 @@ function renderDiagnosis(info) {
   $("diag-range").textContent = info.first ? `${info.first} → ${info.last}` : "无时间戳";
   $("diag-enc").textContent = (info.encodings || []).join(" / ") || "—";
 
-  /* 两个字段都用原生 select。
-     原来用的是 <input list="…"> + <datalist>，有两个叠在一起的毛病：
-       ① 预填的 value="我" 匹配不到任何说话人，Chrome 会按前缀过滤候选，
-          下拉里一条都不显示 —— 这就是"选择不了"；
-       ② datalist 没有可见的下拉箭头，不弹出时和普通输入框完全一样，
-          用户根本不知道这里可以选。
-     说话人是从记录里解析出来的有限集合，下拉是唯一"可选项一目了然"的形态。 */
-  const meSel = $("f-me");
-  const targetSel = $("f-target");
+  /* 两个字段都是「可选 + 可填」：input + datalist 管取值，右侧 ▾ 负责把候选摊开。
+     中间两种做法各有毛病，这里分别治：
+       ① 纯 <select>：记录里没出现的名字填不进去。而微信这类记录里，
+          会话名（备注）和说话人昵称常常不是同一个词，本人也可能不带「我」
+          这个字 —— 必须允许手填；
+       ② 裸 <input list>：预填的 value 会让 Chrome 按前缀把候选过滤光
+          （"选择不了"就是这么来的），而不弹出时又和普通输入框没区别，
+          没人知道这里能选。所以输入框默认留空（空=后端默认值），
+          箭头交给 .combo__pick 显式提供。 */
+  const meInput = $("f-me");
+  const targetInput = $("f-target");
   const speakers = $("diag-speakers");
   speakers.innerHTML = "";
 
-  /* 重新上传文件时别丢掉已经选过的值 */
-  const keepMe = meSel.value || "我";
-  const keepTarget = targetSel.value;
-  meSel.innerHTML = '<option value="我">我（默认）</option>';
-  targetSel.innerHTML = '<option value="">自动</option>';
+  /* 重新上传文件时别丢掉已经填过的值 */
+  const keepMe = meInput.value;
+  const keepTarget = targetInput.value;
+
+  const meList = $("sp-me");
+  const targetList = $("sp-target");
+  meList.innerHTML = "";
+  targetList.innerHTML = "";
 
   (info.speakers || []).forEach((sp) => {
-    const opt = `<option value="${esc(sp.name)}">${esc(sp.name)}（${sp.count} 条）</option>`;
-    meSel.insertAdjacentHTML("beforeend", opt);
-    targetSel.insertAdjacentHTML("beforeend", opt);
+    // datalist 里 value 是填进去的值，label 才是给人看的那行
+    const opt = `<option value="${esc(sp.name)}" label="${esc(sp.name)}（${sp.count} 条）"></option>`;
+    meList.insertAdjacentHTML("beforeend", opt);
+    targetList.insertAdjacentHTML("beforeend", opt);
     speakers.insertAdjacentHTML("beforeend",
-      `<button class="speaker" type="button" data-name="${esc(sp.name)}">` +
+      `<button class="speaker" type="button" data-name="${esc(sp.name)}"` +
+      ` title="点击 → 蒸馏谁｜Alt+点击 → 我是谁">` +
       `<b>${esc(sp.name)}</b> <span>${sp.count}</span></button>`);
   });
 
-  if ([...meSel.options].some((o) => o.value === keepMe)) meSel.value = keepMe;
-  if ([...targetSel.options].some((o) => o.value === keepTarget)) {
-    targetSel.value = keepTarget;
-  }
+  if (keepMe) meInput.value = keepMe;
+  if (keepTarget) targetInput.value = keepTarget;
 
-  /* chip 作为快捷方式：点一下就把「蒸馏谁」设成它 */
+  /* ▾：Chrome 99+ 能 showPicker() 直接摊开候选；不支持的浏览器退回聚焦输入框 */
+  document.querySelectorAll(".combo__pick").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const input = $(btn.dataset.pick);
+      input.focus();
+      try { input.showPicker?.(); } catch { /* 老浏览器忽略 */ }
+    });
+  });
+
+  /* chip 作为快捷方式：点击填「蒸馏谁」，Alt+点击填「我是谁」 */
   speakers.querySelectorAll(".speaker").forEach((el) => {
-    el.addEventListener("click", () => { targetSel.value = el.dataset.name; });
+    el.addEventListener("click", (ev) => {
+      (ev.altKey ? meInput : targetInput).value = el.dataset.name;
+    });
   });
 
   const max = Math.max(1, ...(info.candidates || []).map((c) => c.count));
@@ -159,6 +175,9 @@ $("run").addEventListener("click", async () => {
   $("log").innerHTML = "";
   $("placeholder").hidden = true;
   setState("运行中", "running");
+  // 新一轮开始：把试聊收回空态，否则会对着上一轮的人设说话
+  resetPlayTab();
+  switchTab("log");
 
   const payload = {
     token: state.token,
@@ -170,6 +189,9 @@ $("run").addEventListener("click", async () => {
     no_llm: offline,
     strict: $("f-strict").checked,
     no_verify: $("f-noverify").checked,
+    both: $("f-both").checked,
+    // 公开使用必须有两份画像（主技能扮演你、背景放对方），所以勾了它就把双方打开
+    audience: $("f-public").checked ? "公开" : "本人",
   };
   if (!offline) {
     payload.base_url = $("f-baseurl").value.trim();
@@ -202,13 +224,19 @@ async function poll() {
     return;
   }
 
-  const view = $("view-log");
-  const stick = view.scrollHeight - view.scrollTop - view.clientHeight < 48;
-  const hasLog = Boolean(snapshot.log.trim());
-  $("placeholder").hidden = hasLog;
-  $("log").innerHTML = hasLog ? renderLog(snapshot.log) : "";
-  syncRelation(snapshot.log);
-  if (stick) view.scrollTop = view.scrollHeight;
+  // 渲染这段单独兜住异常：它一旦抛出来，轮询就断了，
+  // 界面会永远停在"运行中"——标签也就一直是灰的，看起来就是"点不动"。
+  try {
+    const view = $("view-log");
+    const stick = view.scrollHeight - view.scrollTop - view.clientHeight < 48;
+    const hasLog = Boolean(snapshot.log.trim());
+    $("placeholder").hidden = hasLog;
+    $("log").innerHTML = hasLog ? renderLog(snapshot.log) : "";
+    syncRelation(snapshot.log);
+    if (stick) view.scrollTop = view.scrollHeight;
+  } catch (err) {
+    showPaneError(err);
+  }
 
   if (snapshot.state === "queued" || snapshot.state === "running") {
     state.timer = setTimeout(poll, 500);
@@ -223,24 +251,39 @@ async function finish(snapshot) {
   const ok = snapshot.state === "done";
   setState(ok ? "完成" : "有失败", ok ? "done" : "failed");
 
+  // 先把标签放出来，再去渲染内容。
+  // 顺序反过来过：渲染任何一步抛异常，用户连"点开看看怎么了"都做不到——
+  // 界面看起来就是死掉了，而真正的原因只躺在 F12 里。
+  const tabs = (view) => document.querySelector(`.tab[data-view="${view}"]`);
+  tabs("verify").disabled = false;
+
   let result;
   try {
     result = await api(`/api/result/${state.jobId}`);
-  } catch {
+  } catch (err) {
+    // 拿不到产物也要让标签可用，并把原因写在面板里，而不是静默卡住
+    tabs("skill").disabled = tabs("memory").disabled = true;
+    showPaneError(err);
     return;
   }
 
-  renderVerify(result.verify);
-  $("view-skill").innerHTML = renderMarkdown(result.skill);
-  $("view-memory").innerHTML = renderMarkdown(result.memory);
+  tabs("skill").disabled = !result.skill;
+  tabs("memory").disabled = !result.memory;
 
-  const tabVerify = document.querySelector('.tab[data-view="verify"]');
-  const tabSkill = document.querySelector('.tab[data-view="skill"]');
-  const tabMemory = document.querySelector('.tab[data-view="memory"]');
-  tabVerify.disabled = false;
-  tabSkill.disabled = !result.skill;
-  tabMemory.disabled = !result.memory;
+  try {
+    renderVerify(result.verify);
+    $("view-skill").innerHTML = renderMarkdown(result.skill);
+    $("view-memory").innerHTML = renderMarkdown(result.memory);
+  } catch (err) {
+    showPaneError(err);          // 渲染炸了也不影响标签可用
+  }
+
+  const tabVerify = tabs("verify");
   tabVerify.textContent = state.findings ? `校验 · ${state.findings}` : "校验";
+
+  /* 试聊页认的是产物目录名：job 只活在进程里（工作台重启就没了），
+     所以链接都带上 skill=<技能名>，重启后照样能打开。 */
+  const skillName = encodeURIComponent($("f-name").value.trim() || "persona");
 
   if (result.has_zip) {
     $("artifact").hidden = false;
@@ -250,11 +293,68 @@ async function finish(snapshot) {
     /* 这里必须重建整个 innerHTML（连图标），因为 JS 会覆盖掉 HTML 里写的内容 */
     $("download").innerHTML =
       `<svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor"
-            stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"
-            aria-hidden="true"><path d="M8 2.6v7.3M5.3 7.2L8 9.9l2.7-2.7"/>
-        <path d="M2.9 11.2v1.3c0 .8.6 1.4 1.4 1.4h7.4c.8 0 1.4-.6 1.4-1.4v-1.3"/></svg>`
+           stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"
+           aria-hidden="true"><path d="M8 2.6v7.3M5.3 7.2L8 9.9l2.7-2.7"/>
+       <path d="M2.9 11.2v1.3c0 .8.6 1.4 1.4 1.4h7.4c.8 0 1.4-.6 1.4-1.4v-1.3"/></svg>`
       + `下载技能包 <span class="btn__meta">${result.zip_name} · ${humanSize(result.zip_size)}</span>`;
+    $("play").href = `/play?job=${encodeURIComponent(state.jobId)}&skill=${skillName}`;
   }
+
+  /* 试聊标签**始终可点**，跟这次跑没跑成、有没有产物无关：
+     有这次的产物就挂上它，没有就让试聊页列出 out/ 下之前生成过的 skill。
+     （页面在这里内嵌一份：?embed=1 会收掉它自己的顶栏。） */
+  tabs("play").disabled = false;
+  playUrl = result.skill
+    ? `/play?job=${encodeURIComponent(state.jobId)}&skill=${skillName}&embed=1`
+    : "/play?embed=1";
+  if (result.skill) openPlayFrame(playUrl);
+}
+
+/* ───────────────────────── 标签与出错兜底 ───────────────────────── */
+
+function switchTab(view) {
+  document.querySelectorAll(".tab").forEach((t) =>
+    t.classList.toggle("is-active", t.dataset.view === view));
+  document.querySelectorAll(".view").forEach((v) =>
+    v.classList.toggle("is-active", v.id === "view-" + view));
+  // 试聊页等到点开才加载：还没跑过蒸馏也能用（它会列出 out/ 下的历史 skill）
+  if (view === "play") openPlayFrame(playUrl);
+}
+
+/* 试聊的地址：跑完一次蒸馏就指向这次运行；否则指向"去挑一份磁盘上的 skill" */
+let playUrl = "/play?embed=1";
+let playLoaded = "";
+
+function openPlayFrame(url) {
+  const frame = $("playframe");
+  if (!frame || !url || playLoaded === url) return;
+  playLoaded = url;                 // frame.src 读回来是绝对地址，只能自己记
+  frame.src = url;
+  frame.hidden = false;
+  $("play-empty").hidden = true;
+}
+
+function resetPlayTab() {
+  /* 新一轮开始：把试聊收回空态（免得对着上一轮的人设说话），但**标签不置灰**——
+     点开时照样会加载 /play?embed=1，让试聊页列出 out/ 下之前生成过的 skill。 */
+  playLoaded = "";
+  playUrl = "/play?embed=1";
+  const frame = $("playframe");
+  if (frame) { frame.hidden = true; frame.src = "about:blank"; }
+  $("play-empty").hidden = false;
+  const tab = document.querySelector('.tab[data-view="play"]');
+  if (tab) tab.disabled = false;
+}
+
+/* 界面自己出错时，把话说在面板里：以前这类异常只出现在 F12 控制台，
+   用户看到的是"点不动、没反应"，只能靠猜。 */
+function showPaneError(err) {
+  const text = `[界面] 渲染出错：${(err && err.message) || err}`;
+  $("log").innerHTML += `<p class="log-bad">${esc(text)}</p>`;
+  $("verify").innerHTML = `<p class="empty">${esc(text)}</p>`;
+  $("view-skill").innerHTML = `<p class="empty">${esc(text)}</p>`;
+  $("view-memory").innerHTML = `<p class="empty">${esc(text)}</p>`;
+  setState("界面出错", "failed");
 }
 
 /* ───────────────────────── 日志渲染 ───────────────────────── */
@@ -412,9 +512,7 @@ function renderMarkdown(src) {
 $("tabs").addEventListener("click", (e) => {
   const tab = e.target.closest(".tab");
   if (!tab || tab.disabled) return;
-  document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("is-active", t === tab));
-  document.querySelectorAll(".view").forEach((v) =>
-    v.classList.toggle("is-active", v.id === "view-" + tab.dataset.view));
+  switchTab(tab.dataset.view);
 });
 
 document.querySelectorAll('input[name="mode"]').forEach((el) => {
@@ -424,6 +522,16 @@ document.querySelectorAll('input[name="mode"]').forEach((el) => {
   });
 });
 
+/* 公开使用必须有两份画像（主技能扮演你、背景放对方），勾上它就顺手把
+   「同时蒸馏双方」也点开——后端会兜底，但界面先说清楚，免得用户以为少给了什么。 */
+$("f-public").addEventListener("change", (e) => {
+  if (e.target.checked) $("f-both").checked = true;
+});
+
 /* ───────────────────────── 启动 ───────────────────────── */
 
 setState("待命");
+
+/* 试聊一开始就能点：还没生成过任何东西时，点开它会列出 out/ 下已有的 skill */
+const playTab = document.querySelector('.tab[data-view="play"]');
+if (playTab) playTab.disabled = false;

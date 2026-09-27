@@ -149,13 +149,18 @@ class Corpus:
     months: set[str]
     day_pairs: set[tuple[int, int]]
     speakers: frozenset[str]      # 归一化的说话人名字，用来判定引用前缀是不是"人名 + 冒号"
+    times: list[str]              # 每行的时间（"2026-03-12 15:04"，无时间则空）——当引用出处用
+    line_speakers: list[str]      # 每行的说话人——同上
 
     @classmethod
     def build(cls, msgs: list[Msg]) -> "Corpus":
         raw_lines: list[str] = []
         lines: list[str] = []
+        times: list[str] = []
+        line_speakers: list[str] = []
         postings: dict[str, list[int]] = {}
         for msg in msgs:
+            when = msg.ts.strftime("%Y-%m-%d %H:%M") if msg.ts else ""
             for raw in (msg.text or "").split("\n"):
                 raw = raw.strip()
                 norm = _norm(raw)
@@ -164,13 +169,38 @@ class Corpus:
                 idx = len(lines)
                 raw_lines.append(raw)
                 lines.append(norm)
+                times.append(when)
+                line_speakers.append(msg.speaker or "")
                 for gram in _bigrams(norm):
                     postings.setdefault(gram, []).append(idx)
         months = {f"{m.ts.year}-{m.ts.month:02d}" for m in msgs if m.ts}
         day_pairs = {(m.ts.month, m.ts.day) for m in msgs if m.ts}
         speakers = frozenset(_norm(m.speaker) for m in msgs if m.speaker)
         return cls(raw_lines, lines, "\n".join(lines), "".join(lines),
-                   postings, months, day_pairs, speakers)
+                   postings, months, day_pairs, speakers, times, line_speakers)
+
+    def locate(self, claim: str, threshold: float = FUZZY_THRESHOLD) -> tuple[float, int]:
+        """给"引用出处"用：返回（覆盖率, 命中行下标）。
+
+        和 :meth:`find` 的差别：**精确命中时也要给出那一行**——find 精确命中返回空
+        nearest（校验只关心"有没有"），但当出处用就得指向具体某句、附上时间与说话人。
+        """
+        base = _norm(claim)
+        if len(base) < 2:
+            return 0.0, -1
+        needles = [base]
+        stripped = _norm(_strip_cite_prefix(claim, self.speakers))
+        if len(stripped) >= 2 and stripped != base:
+            needles.append(stripped)
+        needles += [v for v in _variants(claim)[1:] if len(v) >= 2]
+        best_score, best_idx = 0.0, -1
+        for needle in needles:
+            score, idx = self._coverage_of(needle)
+            if score > best_score:
+                best_score, best_idx = score, idx
+            if best_score >= 0.999:
+                break
+        return round(best_score, 3), (best_idx if best_score >= threshold else -1)
 
     def span(self) -> str:
         if not self.months:
@@ -178,8 +208,8 @@ class Corpus:
         ordered = sorted(self.months)
         return f"{ordered[0]} ~ {ordered[-1]}"
 
-    def _coverage_of(self, needle: str) -> tuple[float, str]:
-        """needle 在语料里最相近的一行，以及它的覆盖率。"""
+    def _coverage_of(self, needle: str) -> tuple[float, int]:
+        """needle 在语料里最相近的一行（下标），以及它的覆盖率。"""
         hits: Counter[int] = Counter()
         for gram in _bigrams(needle):
             for idx in self.postings.get(gram, ()):
@@ -191,7 +221,7 @@ class Corpus:
                 best, best_idx = score, idx
             if best >= 0.999:
                 break
-        return best, (self.raw_lines[best_idx] if best_idx >= 0 else "")
+        return best, best_idx
 
     def find(self, claim: str, threshold: float = FUZZY_THRESHOLD) -> tuple[str, float, str]:
         """返回 (状态, 覆盖率, 最相近的原话)。状态：verified / fuzzy / unverified / skip。"""
@@ -213,11 +243,12 @@ class Corpus:
             if needle in self.joined or needle in self.flat:
                 return "verified", 1.0, ""
 
-        best_score, best_raw = 0.0, ""
+        best_score, best_idx = 0.0, -1
         for needle in needles:
-            score, raw = self._coverage_of(needle)
+            score, idx = self._coverage_of(needle)
             if score > best_score:
-                best_score, best_raw = score, raw
+                best_score, best_idx = score, idx
+        best_raw = self.raw_lines[best_idx] if best_idx >= 0 else ""
         status = "fuzzy" if best_score >= threshold else "unverified"
         return status, round(best_score, 3), best_raw
 

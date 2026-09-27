@@ -1,0 +1,252 @@
+/* 试聊页 —— 只补 style.css 里没有的东西：页面骨架、对话气泡，以及"嵌进标签"时的形态。
+   颜色、圆角、字体、材质全部沿用 style.css 的变量，视觉上跟工作台是同一套东西。 */
+
+/* ── 独立打开时：左边对话，右边接口 ─────────────────────────── */
+
+.play__wrap {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  align-items: start;
+  gap: 16px;
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 18px var(--pad-x) 28px;
+}
+
+/* 撑满可视高度，只有中间的消息区滚动——
+   跟工作台一样"一屏放下"，别让页面跟着聊天天数越长越长。 */
+.play__card {
+  display: flex;
+  flex-direction: column;
+  min-height: 56vh;
+  max-height: calc(100vh - 148px);
+}
+
+/* 表头一行：人设 + 用了哪几份文件 + 状态。
+   独立页和标签内共用这一条，省得两处各写一份表头。 */
+.play__meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 18px;
+  border-bottom: 1px solid var(--line);
+}
+.play__who {
+  font-family: var(--display);
+  font-size: 13.5px;
+  color: var(--ink);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.play__files {
+  font-size: 11.5px;
+  color: var(--ink-3);
+  white-space: nowrap;
+}
+.play__meta .state { margin-left: auto; }
+
+/* 换人设的下拉：跟 .play__files 同一档的"轻量信息"，别抢表头的注意力。
+   原生 select 在这里太宽太高（style.css 里是整行 36px），所以压成一颗小药丸。 */
+.play__swap { position: relative; display: inline-flex; align-items: center; flex: none; }
+.play__swap select {
+  appearance: none;
+  width: auto; height: 26px; padding: 0 26px 0 11px;
+  font-family: var(--sans); font-size: 11.5px; color: var(--ink-2);
+  background: rgba(255, 255, 255, .62);
+  border: 1px solid rgba(22, 32, 63, .14); border-radius: 999px;
+  cursor: pointer; transition: border-color .16s, color .16s;
+}
+.play__swap::after {
+  content: "⌄"; position: absolute; right: 10px;
+  font-size: 12px; color: var(--ink-3); pointer-events: none;
+}
+.play__swap select:hover { border-color: rgba(22, 32, 63, .28); color: var(--ink); }
+.play__swap select:focus-visible {
+  outline: none; border-color: var(--blue); box-shadow: 0 0 0 3px var(--blue-ring);
+}
+
+/* ── 消息区 ─────────────────────────────────────────────────── */
+
+.play__scroll {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 18px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+/* 对话从底部往上长：话少的时候贴着输入框，而不是吊在顶上留一大片空白。
+   ::before 是个零高度、可伸缩的占位；真溢出时它自动塌成 0，不影响滚动。 */
+.play__scroll::before { content: ""; flex: none; }
+.play__scroll:has(.bubble)::before { margin-top: auto; }
+
+.bubble {
+  max-width: 78%;
+  padding: 10px 14px 11px;
+  border-radius: 16px;
+  font-size: 13.5px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
+  animation: rise .28s var(--spring-soft) both;
+}
+/* 右边是你说的话：实色蓝 + 白字。§12 的规矩——颜色落在实色层上。 */
+.bubble--me {
+  align-self: flex-end;
+  color: #fff;
+  background: var(--blue);
+  border-bottom-right-radius: 6px;
+  box-shadow: 0 2px 8px rgba(18, 70, 255, .24);
+}
+/* 左边是 TA：白玻璃。气泡本身就是浮层，所以只留一层轻投影，不再叠玻璃。 */
+.bubble--ta {
+  align-self: flex-start;
+  color: var(--ink);
+  background: rgba(255, 255, 255, .9);
+  border: 1px solid var(--line);
+  border-bottom-left-radius: 6px;
+  box-shadow: var(--shadow);
+}
+.bubble--sys {
+  align-self: center;
+  color: var(--ink-3);
+  font-size: 12px;
+  text-align: center;
+  animation: none;
+}
+.bubble--err {
+  align-self: stretch;
+  max-width: none;
+  color: var(--danger);
+  background: var(--danger-bg);
+  border: 1px solid rgba(214, 40, 40, .22);
+  border-radius: var(--r-sm);
+  font-size: 12.5px;
+}
+.bubble__meta {
+  display: block;
+  margin-top: 5px;
+  font-size: 10.5px;
+  color: var(--ink-3);
+  letter-spacing: .02em;
+}
+.bubble--me .bubble__meta { color: rgba(255, 255, 255, .72); }
+
+/* ── 输入行 ─────────────────────────────────────────────────── */
+
+.composer {
+  display: flex;
+  gap: 9px;
+  padding: 12px 18px 15px;
+  border-top: 1px solid var(--line);
+}
+.composer input[type="text"] { flex: 1; height: 38px; }
+/* .btn 默认 width:100%（表单里是整行按钮），这里要按内容宽 */
+.btn--send { width: auto; flex: none; padding: 10px 18px 11px; }
+
+.play__back {
+  margin-left: 9px;
+  padding: 7px 14px;
+  border-radius: 999px;
+  font-size: 12.5px;
+  color: var(--blue);
+  text-decoration: none;
+  background: rgba(255, 255, 255, .62);
+  border: 1px solid rgba(18, 70, 255, .30);
+  transition: background .18s, border-color .18s;
+}
+.play__back:hover { background: var(--tint-blue); border-color: var(--blue); }
+
+/* ── 接口设置 ───────────────────────────────────────────────── */
+
+.play__cfg { position: sticky; top: calc(var(--topbar-top) + var(--topbar-h) + 18px); }
+.play__cfg summary { cursor: pointer; list-style: none; }
+.play__cfg summary::-webkit-details-marker { display: none; }
+.play__cfg summary::after {
+  content: "⌄";
+  margin-left: auto;
+  font-size: 13px;
+  color: var(--ink-3);
+  transition: transform .2s;
+}
+.play__cfg details[open] summary::after { transform: rotate(180deg); }
+.play__cfg .card__body { padding-top: 14px; }
+
+.play__hint {
+  margin: 12px 0 0;
+  font-size: 11.5px;
+  line-height: 1.75;
+  color: var(--ink-3);
+}
+
+@media (max-width: 860px) {
+  .play__wrap { grid-template-columns: 1fr; }
+  .play__card { max-height: none; min-height: 50vh; }
+  .play__cfg { position: static; }
+  .bubble { max-width: 88%; }
+}
+
+/* ── 嵌进工作台「试聊」标签时（?embed=1） ────────────────────────────
+   外面已经有顶栏和标签栏，本页再画一遍就成了"框里套框"。所以：
+   收掉自己的顶栏，卡片摊平成透明的（跟 SKILL.md / 关系记忆 两个标签一致），
+   只留"表头一行 + 消息 + 输入行"，接口设置降级成下方一条可折叠窄条。
+   顶部留出标签栏的高度，跟其它标签页一样的观感。 */
+body.embed .topbar { display: none; }
+
+body.embed .play__wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  height: 100%;
+  max-width: none;
+  margin: 0;
+  padding: calc(var(--tabs-h) + 16px) clamp(14px, 2.6vw, 30px) 12px;
+  /* 必须显式写 stretch：上面那条 `.play__wrap { align-items: start }` 是给
+     独立页的 grid 用的（交叉轴是垂直方向，让两张卡片顶端对齐），可在 flex column
+     里交叉轴变成了水平方向，start 就成了"子项不要拉伸"——每个子项缩到自己的内容宽，
+     聊天卡只剩左边一段，右边空着。 */
+  align-items: stretch;
+}
+
+body.embed .play__card {
+  flex: 1;
+  /* 消息区要有下限：接口设置展开时它会按比例收缩，
+     没有下限就被压成 0 高，整块对话直接消失。 */
+  min-height: 170px;
+  max-height: none;
+  background: none;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  animation: none;
+}
+
+body.embed .play__meta { padding: 0 2px 10px; }
+body.embed .play__scroll { padding: 16px 2px; }
+body.embed .composer { padding: 10px 0 2px; }
+
+body.embed .play__cfg {
+  position: static;
+  flex: none;
+  /* 展开时它最多占这么多，超出自己在内部滚——否则标签只有一屏高，
+     三个输入框会把整块对话挤出去。 */
+  max-height: 46%;
+  overflow-y: auto;
+  background: none;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  animation: none;
+}
+body.embed .play__cfg .card__head { padding: 8px 2px; border-bottom: 0; }
+body.embed .play__cfg .card__body { padding: 2px 2px 10px; }
+
+/* 标签栏上已经写着「试聊」，卡头里的 01/02 编号和英文小标签在这里只是噪音 */
+body.embed .num, body.embed .en { display: none; }

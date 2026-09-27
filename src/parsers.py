@@ -203,6 +203,31 @@ def _json_items(data):
     return []
 
 
+#: wx-cli（微信 PC 4.x 导出）的 JSON：顶层 chat/username/chat_type + messages[]，
+#: 每条消息是 {content, local_id, sender, time, timestamp, type}。
+def _looks_like_wx_json(data) -> bool:
+    """是否是 wx-cli 的微信导出 JSON。
+
+    这类记录的两个坑（都实测过）：
+
+    * **对面没有 sender**：私聊里 ``sender`` 只在本人发言时填本人的昵称，
+      对方的消息是空串（不是缺失字段）。不处理的话通用逻辑会把它落到「未知」——
+      实测一份 5.1 万条的记录有 23594 条（46%）因此失去归属。
+    * **本人填的是真实昵称**：所以 ``--me`` 的默认值「我」对不上，自动判断时
+      会把自己的消息当成要蒸馏的对象。私聊只有两个人，非空的那一侧必然是
+      本地账号自己，因此这里直接归一到「我」；对方用会话名（顶层 ``chat``）补上。
+    """
+    if not isinstance(data, dict) or not isinstance(data.get("messages"), list):
+        return False
+    if "chat" not in data or "username" not in data:
+        return False
+    sample = [it for it in data["messages"][:50] if isinstance(it, dict)]
+    if not sample:
+        return False
+    hit = sum(1 for it in sample if {"content", "time", "type"} <= it.keys())
+    return hit * 2 >= len(sample)
+
+
 def parse_wechat_db(path: Path, channel: str | None = None) -> list[Msg]:
     """读取已解密的微信 EnMicroMsg.db 的 MSG 表。"""
     try:
@@ -334,6 +359,10 @@ def parse_json_log(path: Path) -> list[Msg]:
     except Exception:
         return []
     items = _json_items(data)
+    wx = _looks_like_wx_json(data)
+    #: 私聊的对面与会话名同一个人（wx-cli 不给对端填 sender，只给本人填昵称）
+    wx_partner = (str(data.get("chat") or "").strip()
+                  if wx and isinstance(data, dict) and not data.get("is_group") else "")
     out: list[Msg] = []
     for it in items if isinstance(items, list) else []:
         if not isinstance(it, dict):
@@ -354,8 +383,19 @@ def parse_json_log(path: Path) -> list[Msg]:
         t = it.get("created_at") or it.get("createdAt") or it.get("timestamp_ms")
         t = t if t is not None else (it.get("time") or it.get("timestamp") or it.get("date") or "")
         ts = _parse_any_timestamp(t)
+        speaker = str(who).strip()
+        if wx:
+            # 系统提示（撤回/位置共享等）也是空 sender，靠 type 先摘出来，
+            # 免得把系统提示算成某一方说的话。
+            if str(it.get("type", "")).strip() == "系统":
+                speaker = "系统消息"
+            elif wx_partner and speaker:
+                # 私聊非空的那一侧＝本地账号自己（实测「文件传输助手」全是本人发言且 sender 为昵称）
+                speaker = "我"
+            elif wx_partner:
+                speaker = wx_partner
         if txt:
-            out.append(Msg(ts, str(who).strip() or "未知", txt))
+            out.append(Msg(ts, speaker or "未知", txt))
     return out
 
 
@@ -546,6 +586,8 @@ MEDIA_TAG_RE = re.compile(
     r"\[(图片|照片|表情|语音|视频|文件|链接|位置|动画表情|回复消息|合并转发|转账|红包)"
     r"\s*[:：][^\[\]]{0,240}\]"
 )
+#: wx-cli 给图片消息的正文带了内部主键尾巴：[图片] local_id=18750
+LOCAL_ID_TAIL_RE = re.compile(r"\s+local_id=\d+\s*$")
 #: QQ 表情码：整条消息由一个或多个 "/睁眼" 这样的码组成（faceType 2）
 FACE_RUN_RE = re.compile(r"(?:/[^\s/:：，。！？、]{1,12})+")
 #: 文件收发提示：对方已接收文件「xxx.docx」
@@ -561,6 +603,7 @@ def normalize_message_text(text: str) -> str:
     """
     if not text:
         return text
+    text = LOCAL_ID_TAIL_RE.sub("", text)
     text = MEDIA_TAG_RE.sub(lambda m: f"[{m.group(1)}]", text)
     stripped = text.strip()
     if FILE_NOTICE_RE.match(stripped):

@@ -232,6 +232,27 @@ def _looks_like_topic(token: str) -> bool:
     return not keep
 
 
+#: 名词性词性：这些才算"看得懂的话题"（实验室、单片机、面试…）。
+#: 注意不能反过来用 _looks_like_topic：它判的是"不是说话习惯"，于是「你的」「了一」
+#: 这类虚词碎片也会被判成话题。**必须切出来正好是一个名词**才算。
+_TOPIC_TAGS = frozenset({"n", "ns", "nr", "nt", "nz", "nw", "ng", "an", "vn"})
+_topic_cache: dict[str, bool] = {}
+
+
+def topic_word(token: str) -> bool:
+    """是不是一个话题名词（供主题档案筛候选）。没有 jieba 时退化成"够长就放行"。"""
+    if pseg is None:
+        return len(token) >= 2
+    cached = _topic_cache.get(token)
+    if cached is not None:
+        return cached
+    # jieba 的 pair 是具名元组，直接解包最稳（别用下标访问）
+    pairs = [(word, flag) for word, flag in pseg.cut(token) if word.strip()]
+    verdict = len(pairs) == 1 and pairs[0][1] in _TOPIC_TAGS
+    _topic_cache[token] = verdict
+    return verdict
+
+
 def _best_example(candidates: list[str]) -> str:
     """在候选里挑信息量最高的一条：够长、带情绪词、不是纯笑声。"""
     def score(text: str) -> float:
