@@ -1,6 +1,6 @@
 # xpskill
 
-<div align="center"><img alt="Tests" src="https://img.shields.io/badge/tests-not_configured-lightgrey.svg"><img alt="License" src="https://img.shields.io/badge/license-MIT-green.svg"><img alt="Version" src="https://img.shields.io/badge/version-unreleased-lightgrey.svg"><img alt="Language" src="https://img.shields.io/badge/language-Python-3776AB.svg"><img alt="Dependencies" src="https://img.shields.io/badge/dependencies-none-brightgreen.svg"><img alt="Offline" src="https://img.shields.io/badge/offline--first-yes-1246ff.svg"></div>
+<div align="center"><img alt="License" src="https://img.shields.io/badge/license-MIT-green.svg"><img alt="Language" src="https://img.shields.io/badge/language-Python-3776AB.svg"></div>
 
 <p align="center">🇺🇸 <a href="./README.en.md">English</a> | 🇨🇳 <a href="./README.md">简体中文</a></p>
 
@@ -154,7 +154,7 @@ python -m src.web --port 9000
 - 投放区下方展开**诊断**：解析器、条数、时间跨度、命中的编码，以及各候选解析器分别解出多少条——带「实际采用」标记的那个，就是接走这份文件的解析器；
 - 「开始蒸馏」才从灰变亮。**没解出消息时它一直是禁用的**，所以顺序不能颠倒。
 
-条数明显不对就先换文件、或另存成 UTF-8 再拖一次：对不上号的格式会静默降级，「只解出 3 条」这种事只在这里看得见。
+条数明显不对就先换文件、或另存成 UTF-8 再拖一次：对不上号的格式会静默降级，「只解出3条」这种事只在这里看得见。
 
 **A3 · 填配置**（左栏「配置」）
 
