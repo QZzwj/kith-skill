@@ -1,7 +1,6 @@
 # xpskill
 
-<div align="center"><img alt="Tests" src="https://img.shields.io/badge/tests-not_configured-lightgrey.svg"><img alt="License" src="https://img.shields.io/badge/license-MIT-green.svg"><img alt="Version" src="https://img.shields.io/badge/version-unreleased-lightgrey.svg"><img alt="Language" src="https://img.shields.io/badge/language-Python-3776AB.svg"><img alt="Dependencies" src="https://img.shields.io/badge/dependencies-none-brightgreen.svg"><img alt="Offline" src="https://img.shields.io/badge/offline--first-yes-1246ff.svg"></div>
-
+<div align="center"><img alt="License" src="https://img.shields.io/badge/license-MIT-green.svg"><img alt="Language" src="https://img.shields.io/badge/language-Python-3776AB.svg"></div>
 <p align="center">🇺🇸 <a href="./README.en.md">English</a> | 🇨🇳 <a href="./README.md">简体中文</a></p>
 
 <p align="center">
