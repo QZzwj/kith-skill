@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="680" viewBox="0 0 1200 680" role="img"
      aria-labelledby="wf-title wf-desc"
      font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif">
-  <title id="wf-title">xpskill 的六步流水线：解析、统计画像、挑选代表片段、蒸馏、校验结论、打包</title>
+  <title id="wf-title">kith-skill 的六步流水线：解析、统计画像、挑选代表片段、蒸馏、校验结论、打包</title>
   <desc id="wf-desc">白色卡片：顶部是标题；中部是六张步骤卡，每张写清这一步做什么、产出什么、你可以核对什么；底部说明 LLM 失败时如何退回离线抽取式蒸馏。</desc>
 
   <rect width="1200" height="680" rx="26" fill="#ffffff"/>

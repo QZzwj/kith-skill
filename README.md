@@ -1,11 +1,11 @@
-# xpskill
+# kith-skill
 
 <div align="center"><img alt="License" src="https://img.shields.io/badge/license-MIT-green.svg"><img alt="Python" src="https://img.shields.io/badge/python-3.10%2B-3776AB.svg"></div>
 
 <p align="center">🇺🇸 <a href="./README.en.md">English</a> | 🇨🇳 <a href="./README.md">简体中文</a></p>
 
 <p align="center">
-<img src="assets/readme/hero.svg" width="100%" alt="xpskill：把一份聊天记录，变成能装进设备的人设技能包；产物为 SKILL.md、references/memory.md 与 name.zip，下方是解析 → 统计画像 → 挑选片段 → 蒸馏 → 校验结论 → 打包 六步流水线">
+<img src="assets/readme/hero.svg" width="100%" alt="kith-skill：把一份聊天记录，变成能装进设备的人设技能包；产物为 SKILL.md、references/memory.md 与 name.zip，下方是解析 → 统计画像 → 挑选片段 → 蒸馏 → 校验结论 → 打包 六步流水线">
 </p>
 
 **把一份聊天记录，变成一个能装进设备的人设技能包**：`SKILL.md` + `references/memory.md` + `<name>.zip`。
@@ -19,7 +19,7 @@
 ## 先看结果
 
 <p align="center">
-<img src="docs/images/tutorial-a4-log.png" width="100%" alt="xpskill 网页工作台：左栏进料·配置·执行，右栏运行日志/校验/SKILL.md/关系记忆/试聊">
+<img src="docs/images/tutorial-a4-log.png" width="100%" alt="先看结果：离线跑一遍的运行日志，六步流水线、结论校验与包体积都在里面">
 </p>
 
 一个网页工作台，两条命令，两条路。左边把包造出来，右边立刻验收：跑完就能在「试聊」里跟 TA 说两句，不满意就手改产物或换配方重跑。

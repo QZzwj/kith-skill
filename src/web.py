@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""xpskill 的本地 web 前端。
+"""kith-skill 的本地 web 前端。
 
 它存在的理由是把 CLI 里**看不见的部分**搬上台面：
 
@@ -45,7 +45,7 @@ __all__ = ["main"]
 STATIC_DIR = Path(__file__).resolve().parent / "webui"
 
 #: 一次会话一个临时根目录；进程退出时清掉。只放上传的原始聊天记录
-SESSION_DIR = Path(tempfile.mkdtemp(prefix="xpskill-web-"))
+SESSION_DIR = Path(tempfile.mkdtemp(prefix="kith-skill-web-"))
 
 #: 打包结果写到「启动 web 服务的当前目录/out」，不进临时目录，方便直接取走 zip
 OUT_ROOT = Path.cwd() / "out"
@@ -604,7 +604,7 @@ def _run_job(job: Job) -> None:
 
 
 class _Handler(BaseHTTPRequestHandler):
-    server_version = "xpskill-web"
+    server_version = "kith-skill-web"
     protocol_version = "HTTP/1.1"
 
     # ---------------------------------------------------------------- 工具
@@ -843,8 +843,8 @@ def _port_busy(host: str, port: int) -> bool:
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
-        prog="xpskill-web",
-        description="xpskill 的本地 web 前端（只绑定本机，聊天记录不出网）",
+        prog="kith-skill-web",
+        description="kith-skill 的本地 web 前端（只绑定本机，聊天记录不出网）",
     )
     parser.add_argument("--host", default="127.0.0.1", help="监听地址（默认只绑本机）")
     parser.add_argument("--port", type=int, default=8765, help="端口（默认 8765）")
@@ -865,7 +865,7 @@ def main(argv=None) -> int:
 
     server = ThreadingHTTPServer((args.host, args.port), _Handler)
     url = f"http://{args.host}:{args.port}/"
-    print(f"xpskill web 已启动：{url}")
+    print(f"kith-skill web 已启动：{url}")
     print(f"  输出目录：{OUT_ROOT}（打包好的 zip 会落在这里）")
     print(f"  临时目录：{SESSION_DIR}（只放上传的聊天记录，退出即删）")
     print("  只监听本机；聊天记录与 API Key 都不会离开这台机器。Ctrl+C 结束。")

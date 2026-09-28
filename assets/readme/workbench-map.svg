@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="600" viewBox="0 0 1200 600" role="img"
      aria-labelledby="wm-title wm-desc"
      font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif">
-  <title id="wm-title">xpskill 网页工作台界面地图：左栏三张卡（进料、配置、执行），右栏五个标签（运行日志、校验、SKILL.md、关系记忆、试聊）</title>
+  <title id="wm-title">kith-skill 网页工作台界面地图：左栏三张卡（进料、配置、执行），右栏五个标签（运行日志、校验、SKILL.md、关系记忆、试聊）</title>
   <desc id="wm-desc">白色卡片：左边一列画三个操作步骤卡，右边一列画五个验收标签及各自要看的东西；这是界面示意图，真实界面见下方截图。</desc>
 
   <rect width="1200" height="600" rx="26" fill="#ffffff"/>

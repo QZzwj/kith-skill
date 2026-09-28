@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Backward-compatible launcher for the modular xpskill package."""
+"""Backward-compatible launcher for the modular kith-skill package."""
 
 from __future__ import annotations
 

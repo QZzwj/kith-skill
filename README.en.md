@@ -1,11 +1,11 @@
-# xpskill
+# kith-skill
 
 <div align="center"><img alt="License" src="https://img.shields.io/badge/license-MIT-green.svg"><img alt="Python" src="https://img.shields.io/badge/python-3.10%2B-3776AB.svg"></div>
 
 <p align="center">🇺🇸 <a href="./README.en.md">English</a> | 🇨🇳 <a href="./README.md">简体中文</a></p>
 
 <p align="center">
-<img src="assets/readme/hero.svg" width="100%" alt="xpskill: turn a chat log into a persona skill pack you can drop onto a device; the outputs are SKILL.md, references/memory.md and name.zip, followed by the six-step pipeline parse → profile → sample → distil → verify → package">
+<img src="assets/readme/hero.svg" width="100%" alt="kith-skill: turn a chat log into a persona skill pack you can drop onto a device; the outputs are SKILL.md, references/memory.md and name.zip, followed by the six-step pipeline parse → profile → sample → distil → verify → package">
 </p>
 
 **Turn a chat log into a persona skill pack you can drop onto a device**: `SKILL.md` + `references/memory.md` + `<name>.zip`.
@@ -19,7 +19,7 @@ How to read: [What you get](#what-you-get) · [Six-step pipeline](#the-six-step-
 ## First look
 
 <p align="center">
-<img src="docs/images/tutorial-a4-log.png" width="100%" alt="The xpskill web workbench: input · settings · run on the left, log / verification / SKILL.md / memory / try-chat on the right">
+<img src="docs/images/tutorial-a4-log.png" width="100%" alt="First look: the run log of an offline pass — six pipeline steps, verification counts and pack size in one column">
 </p>
 
 One web workbench, two commands, two routes. The left column builds the pack and the right column accepts it: as soon as a run finishes you can say a couple of things to them under "try-chat", and if it does not feel right, edit the artifact by hand or change the recipe and re-run.

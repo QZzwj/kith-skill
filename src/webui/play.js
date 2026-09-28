@@ -1,4 +1,4 @@
-/* xpskill 试聊页 —— 拿刚生成的那套产物当人设，当场对话。
+/* kith-skill 试聊页 —— 拿刚生成的那套产物当人设，当场对话。
    没有框架、没有构建步骤；跟 app.js 一样，$ / esc / api 这几个小工具自己带着。 */
 
 const $ = (id) => document.getElementById(id);
@@ -93,7 +93,7 @@ async function boot() {
 
 /* 温度是口味不是正确性：记住用户挑过的档位，刷新、重开页面都还在。
    服务端给的值（环境变量或默认档）只在没有记忆时当起点。 */
-const TEMP_KEY = "xpskill.chat.temperature";
+const TEMP_KEY = "kith-skill.chat.temperature";
 
 function pickTemperature(serverValue) {
   try {

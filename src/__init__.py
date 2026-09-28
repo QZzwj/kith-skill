@@ -1,4 +1,4 @@
-"""xpskill: turn chat exports into xinpai-bot persona skill packages."""
+"""kith-skill: turn chat exports into xinpai-bot persona skill packages."""
 
 from .models import Msg, Stats
 

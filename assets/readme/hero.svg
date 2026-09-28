@@ -1,8 +1,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="420" viewBox="0 0 1200 420" role="img"
      aria-labelledby="hero-title hero-desc"
      font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif">
-  <title id="hero-title">xpskill：把一份聊天记录，变成能装进设备的人设技能包</title>
-  <desc id="hero-desc">浅冰蓝标题板。左侧为项目名 xpskill、一句话价值、产物清单与依赖说明；下方是六格流水线，依次为解析聊天记录、统计画像、挑选代表片段、蒸馏、校验结论、打包产物，其中「蒸馏」一格以黄色标出。</desc>
+  <title id="hero-title">kith-skill：把一份聊天记录，变成能装进设备的人设技能包</title>
+  <desc id="hero-desc">浅冰蓝标题板。左侧为项目名 kith-skill、一句话价值、产物清单与依赖说明；下方是六格流水线，依次为解析聊天记录、统计画像、挑选代表片段、蒸馏、校验结论、打包产物，其中「蒸馏」一格以黄色标出。</desc>
 
   <defs>
     <linearGradient id="glass" x1="0" y1="0" x2="0.7" y2="1">
@@ -17,7 +17,7 @@
 
   <g id="title-block">
     <text x="64" y="84" font-size="18" fill="#4A5268">聊天记录 → 人设技能包 · 适配 xinpai-bot · Python 3.10+ 零依赖</text>
-    <text x="64" y="160" font-size="76" font-weight="700" fill="#16203F" letter-spacing="-1">xpskill</text>
+    <text x="64" y="160" font-size="76" font-weight="700" fill="#16203F" letter-spacing="-1">kith-skill</text>
     <text x="64" y="206" font-size="30" fill="#39415C">把一份聊天记录，变成能装进设备的人设技能包</text>
     <text x="64" y="244" font-size="20" fill="#4A5268" font-family="ui-monospace,Consolas,monospace">SKILL.md + references/memory.md + &lt;name&gt;.zip</text>
     <text x="64" y="292" font-size="18" fill="#4A5268">六步流水线，每一步都能单独核对</text>

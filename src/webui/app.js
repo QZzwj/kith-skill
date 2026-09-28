@@ -1,4 +1,4 @@
-/* xpskill 工作台 —— 前端逻辑
+/* kith-skill 工作台 —— 前端逻辑
    没有框架、没有构建步骤：一个文件搞定上传、诊断、执行、预览。 */
 
 const $ = (id) => document.getElementById(id);

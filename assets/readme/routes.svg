@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="440" viewBox="0 0 1200 440" role="img"
      aria-labelledby="rt-title rt-desc"
      font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif">
-  <title id="rt-title">xpskill 的两条路：网页工作台与命令行，产物完全一致</title>
+  <title id="rt-title">kith-skill 的两条路：网页工作台与命令行，产物完全一致</title>
   <desc id="rt-desc">白色卡片左右对照：左侧是路线 A 网页工作台的四步操作，右侧是路线 B 命令行的四个常用组合；底部说明两条路产出同一份 SKILL.md、references/ 与 zip。</desc>
 
   <rect width="1200" height="440" rx="26" fill="#ffffff"/>
