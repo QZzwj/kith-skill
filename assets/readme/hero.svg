@@ -1,0 +1,73 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="420" viewBox="0 0 1200 420" role="img"
+     aria-labelledby="hero-title hero-desc"
+     font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif">
+  <title id="hero-title">xpskill：把一份聊天记录，变成能装进设备的人设技能包</title>
+  <desc id="hero-desc">浅冰蓝标题板。左侧为项目名 xpskill、一句话价值、产物清单与依赖说明；下方是六格流水线，依次为解析聊天记录、统计画像、挑选代表片段、蒸馏、校验结论、打包产物，其中「蒸馏」一格以黄色标出。</desc>
+
+  <defs>
+    <linearGradient id="glass" x1="0" y1="0" x2="0.7" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.8"/>
+      <stop offset="0.55" stop-color="#ffffff" stop-opacity="0.18"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1200" height="420" rx="26" fill="#E7F8FD"/>
+  <rect width="1200" height="420" rx="26" fill="url(#glass)"/>
+
+  <g id="title-block">
+    <text x="64" y="84" font-size="18" fill="#4A5268">聊天记录 → 人设技能包 · 适配 xinpai-bot · Python 3.10+ 零依赖</text>
+    <text x="64" y="160" font-size="76" font-weight="700" fill="#16203F" letter-spacing="-1">xpskill</text>
+    <text x="64" y="206" font-size="30" fill="#39415C">把一份聊天记录，变成能装进设备的人设技能包</text>
+    <text x="64" y="244" font-size="20" fill="#4A5268" font-family="ui-monospace,Consolas,monospace">SKILL.md + references/memory.md + &lt;name&gt;.zip</text>
+    <text x="64" y="292" font-size="18" fill="#4A5268">六步流水线，每一步都能单独核对</text>
+  </g>
+
+  <g id="pipeline-band">
+    <g>
+      <rect x="64" y="312" width="168" height="76" rx="13" fill="#ffffff" fill-opacity="0.72" stroke="#16203F" stroke-opacity="0.08"/>
+      <text x="80" y="344" font-size="17" fill="#1246FF" font-family="ui-monospace,Consolas,monospace">[1/6]</text>
+      <text x="80" y="374" font-size="22" font-weight="600" fill="#16203F">解析</text>
+    </g>
+    <g>
+      <rect x="246" y="312" width="168" height="76" rx="13" fill="#ffffff" fill-opacity="0.72" stroke="#16203F" stroke-opacity="0.08"/>
+      <text x="262" y="344" font-size="17" fill="#1246FF" font-family="ui-monospace,Consolas,monospace">[2/6]</text>
+      <text x="262" y="374" font-size="22" font-weight="600" fill="#16203F">统计画像</text>
+    </g>
+    <g>
+      <rect x="428" y="312" width="168" height="76" rx="13" fill="#ffffff" fill-opacity="0.72" stroke="#16203F" stroke-opacity="0.08"/>
+      <text x="444" y="344" font-size="17" fill="#1246FF" font-family="ui-monospace,Consolas,monospace">[3/6]</text>
+      <text x="444" y="374" font-size="22" font-weight="600" fill="#16203F">挑选片段</text>
+    </g>
+    <g>
+      <rect x="610" y="312" width="168" height="76" rx="13" fill="#FFEFB8" stroke="#FFCC14"/>
+      <text x="626" y="344" font-size="17" fill="#7D6620" font-family="ui-monospace,Consolas,monospace">[4/6]</text>
+      <text x="626" y="374" font-size="22" font-weight="600" fill="#16203F">蒸馏</text>
+    </g>
+    <g>
+      <rect x="792" y="312" width="168" height="76" rx="13" fill="#ffffff" fill-opacity="0.72" stroke="#16203F" stroke-opacity="0.08"/>
+      <text x="808" y="344" font-size="17" fill="#1246FF" font-family="ui-monospace,Consolas,monospace">[5/6]</text>
+      <text x="808" y="374" font-size="22" font-weight="600" fill="#16203F">校验结论</text>
+    </g>
+    <g>
+      <rect x="974" y="312" width="168" height="76" rx="13" fill="#EEF2FF" stroke="#1246FF" stroke-opacity="0.35"/>
+      <text x="990" y="344" font-size="17" fill="#0A35CC" font-family="ui-monospace,Consolas,monospace">[6/6]</text>
+      <text x="990" y="374" font-size="22" font-weight="600" fill="#16203F">打包</text>
+    </g>
+    <g stroke="#1246FF" stroke-opacity="0.45" stroke-width="2" fill="none" transform="translate(239 350)">
+      <path d="M -3 -5 L 2 0 L -3 5"/>
+    </g>
+    <g stroke="#1246FF" stroke-opacity="0.45" stroke-width="2" fill="none" transform="translate(421 350)">
+      <path d="M -3 -5 L 2 0 L -3 5"/>
+    </g>
+    <g stroke="#1246FF" stroke-opacity="0.45" stroke-width="2" fill="none" transform="translate(603 350)">
+      <path d="M -3 -5 L 2 0 L -3 5"/>
+    </g>
+    <g stroke="#1246FF" stroke-opacity="0.45" stroke-width="2" fill="none" transform="translate(785 350)">
+      <path d="M -3 -5 L 2 0 L -3 5"/>
+    </g>
+    <g stroke="#1246FF" stroke-opacity="0.45" stroke-width="2" fill="none" transform="translate(967 350)">
+      <path d="M -3 -5 L 2 0 L -3 5"/>
+    </g>
+  </g>
+</svg>

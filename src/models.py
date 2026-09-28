@@ -23,6 +23,12 @@ class Stats:
     session_starts: Counter = field(default_factory=Counter)
     first_ts: datetime | None = None
     last_ts: datetime | None = None
+    #: 下面四个是「温度」的客观线索：光看"说了什么"量不出亲疏，
+    #: 回复快慢、连不连发、爱不爱反问、表情密度才是聊天里的体温。
+    reply_gap: float = 0.0      # TA 的回复间隔中位数（分钟）
+    burst_ratio: float = 0.0    # TA 的消息里「紧接着自己上一条」的比例（喜欢拆成几句说）
+    question_ratio: float = 0.0 # TA 的消息里问句的比例（爱不爱把话抛回去）
+    emoji_ratio: float = 0.0    # TA 的消息里带表情标记的比例
 
 
 CONFLICT_WORDS = ["吵", "生气", "不理", "分手", "烦", "算了", "随便", "别说了",

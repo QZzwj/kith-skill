@@ -1,13 +1,36 @@
 import statistics
+from datetime import timedelta
 
 from .models import CONFLICT_WORDS, SESSION_GAP, STOP_PHRASES, Msg, Stats
 from .parsers import SENTENCE_SPLIT, WEIBO_EMOJI
+
+#: 超过一周的空档不算"回复"（那是断联，不是慢）
+MAX_REPLY_GAP = timedelta(days=7)
+
+
+def reply_gaps(msgs: list[Msg]) -> dict[str, list[float]]:
+    """每个人的回复延迟（分钟）：换人发言时，间隔算在后开口那个人的头上。
+
+    离线蒸馏和统计数据都要用它，放一份才不会两边口径打架
+    （一个算"隔了 3 分钟回"、另一个算"隔了 8 分钟回"，用户只会觉得这工具不准）。
+    """
+    gaps: dict[str, list[float]] = {}
+    prev: Msg | None = None
+    for m in msgs:
+        if prev and prev.ts and m.ts and m.speaker != prev.speaker:
+            delta = (m.ts - prev.ts).total_seconds() / 60
+            if 0 <= delta <= MAX_REPLY_GAP.total_seconds() / 60:
+                gaps.setdefault(m.speaker, []).append(delta)
+        prev = m
+    return gaps
 
 
 def analyse(msgs: list[Msg], target: str) -> Stats:
     st = Stats()
     st.total = len(msgs)
     lengths = []
+    mine = bursts = questions = with_emoji = 0
+    prev: Msg | None = None
     for m in msgs:
         st.per_speaker[m.speaker] += 1
         if m.ts:
@@ -17,9 +40,18 @@ def analyse(msgs: list[Msg], target: str) -> Stats:
             st.first_ts = min(st.first_ts, m.ts) if st.first_ts else m.ts
             st.last_ts = max(st.last_ts, m.ts) if st.last_ts else m.ts
         if m.speaker != target:
+            prev = m
             continue
+        mine += 1
+        if prev is not None and prev.speaker == target:
+            bursts += 1                      # 连着发：一句话拆成好几条说
         lengths.append(len(m.text))
-        for emo in WEIBO_EMOJI.findall(m.text):
+        emos = WEIBO_EMOJI.findall(m.text)
+        if emos:
+            with_emoji += 1
+        if m.text.rstrip().endswith(("?", "？", "吗", "呢", "吧")):
+            questions += 1                   # 爱把话抛回去的人，对话是有来有回的
+        for emo in emos:
             st.emoji[emo] += 1
         for word in CONFLICT_WORDS:
             if word in m.text:
@@ -30,8 +62,15 @@ def analyse(msgs: list[Msg], target: str) -> Stats:
                 continue  # [图片] [表情] 这类占位不是口头禅
             if 2 <= len(seg) <= 8 and seg not in STOP_PHRASES and not seg.isdigit():
                 st.phrases[seg] += 1
+        prev = m
 
     st.avg_len = round(statistics.mean(lengths), 1) if lengths else 0.0
+    if mine:
+        st.burst_ratio = round(bursts / mine * 100, 1)
+        st.question_ratio = round(questions / mine * 100, 1)
+        st.emoji_ratio = round(with_emoji / mine * 100, 1)
+    gaps = reply_gaps(msgs).get(target, [])
+    st.reply_gap = round(statistics.median(gaps), 1) if gaps else 0.0
 
     # 会话切分：>30 分钟算新会话，统计谁先开口（主动找人）
     prev = None
@@ -41,6 +80,19 @@ def analyse(msgs: list[Msg], target: str) -> Stats:
         if m.ts:
             prev = m.ts
     return st
+
+
+def _fmt_gap(minutes: float) -> str:
+    """回复间隔的人话写法。0 表示"算不出来"（没有可配对的相邻消息）。"""
+    if minutes <= 0:
+        return "—"
+    if minutes < 1:
+        return "不到 1 分钟"
+    if minutes < 60:
+        return f"{minutes:.0f} 分钟"
+    if minutes < 60 * 24:
+        return f"{minutes / 60:.1f} 小时"
+    return f"{minutes / 1440:.1f} 天"
 
 
 def stats_markdown(st: Stats, target: str) -> str:
@@ -60,6 +112,11 @@ def stats_markdown(st: Stats, target: str) -> str:
         f"（对方 {sum(v for k, v in st.session_starts.items() if k != target)} 次）",
         f"- {target} 平均消息长度：{st.avg_len} 字",
         f"- 深夜（23:00–05:00）消息占比：{late_ratio}",
+        # 下面四条是"体温"：一个人说得短不短、回得快不快、爱不爱把话抛回来，
+        # 比"他说过什么"更能决定模仿出来像不像。
+        f"- 回复节奏：{target} 通常隔 {_fmt_gap(st.reply_gap)}回（中位数）",
+        f"- 说话节奏：{st.burst_ratio:.0f}% 的消息是紧接着自己上一条发的（拆成几句说），"
+        f"{st.question_ratio:.0f}% 是问句，{st.emoji_ratio:.0f}% 带表情标记",
     ]
     if top_phrases:
         lines.append(f"- 高频口头禅候选：{'、'.join(top_phrases)}")

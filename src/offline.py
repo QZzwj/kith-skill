@@ -1,8 +1,8 @@
 """离线抽取式蒸馏：不调用任何 LLM，把聊天记录直接变成可用的人设与关系记忆。
 
 和 ``llm.consult_llm()`` 的根本区别是**这里不生成任何新句子**：
-- 说话风格、情感模式、关系行为来自文体计量学（stylometry）统计；
-- 口头禅、典型例句、称呼、地点、梗来自原文抽取；
+- 说话风格、情感模式、关系行为、温度与分寸来自文体计量学（stylometry）统计；
+- 口头禅、典型例句、接话方式、称呼、地点、梗来自原文抽取；
 - 每条结论后面都附统计依据，便于人工核对真假。
 
 因此它输出的东西比 LLM 更保守，但每一条都能在记录里找到出处。
@@ -13,10 +13,11 @@ from __future__ import annotations
 
 import re
 import statistics
-from collections import Counter, defaultdict
+from collections import Counter
 from collections.abc import Sequence
 from datetime import datetime, timedelta
 
+from .analysis import reply_gaps
 from .models import CONFLICT_WORDS, SESSION_GAP, STOP_PHRASES, Msg, Stats
 
 try:  # 可选增强：装了就用，没装不影响任何功能
@@ -687,24 +688,11 @@ def _emotion_items(msgs: list[Msg], target: str, relation: str = "朋友") -> li
 # 四、关系行为
 # ----------------------------------------------------------------------------
 
-def _reply_gaps(msgs: list[Msg]) -> dict[str, list[float]]:
-    """统计每个说话者的"回复延迟"（分钟）：换人发言时，间隔算后者的。"""
-    gaps: dict[str, list[float]] = defaultdict(list)
-    prev: Msg | None = None
-    for m in msgs:
-        if prev and prev.ts and m.ts and m.speaker != prev.speaker:
-            delta = (m.ts - prev.ts).total_seconds() / 60
-            if 0 <= delta <= 60 * 24 * 7:  # 超过一周的空档不算"回复"
-                gaps[m.speaker].append(delta)
-        prev = m
-    return gaps
-
-
 def _relation_items(msgs: list[Msg], target: str, stats: Stats) -> list[str]:
     items: list[str] = []
     counterpart = _counterpart(stats, target)
 
-    gaps = _reply_gaps(msgs)
+    gaps = reply_gaps(msgs)
     mine = gaps.get(target, [])
     if mine:
         items.append(
@@ -935,6 +923,163 @@ def _sweet_items(msgs: list[Msg], limit: int = 6) -> list[str]:
 
 
 # ----------------------------------------------------------------------------
+# 六·五、语境（怎么接话）与温度（亲疏分寸）
+# ----------------------------------------------------------------------------
+
+#: 直球表达：想念 / 喜欢这类把情绪直接说出口的话
+DIRECT_WORDS = ("想你", "好想你", "喜欢你", "爱你", "抱抱", "亲亲", "么么", "离不开你")
+
+#: 亲密度刻度的话术。分数只是把四类信号摆在一起的结果，写出来是给人看的
+#: （"6/10，亲近"），不是给机器当阈值用的。
+_WARMTH_LABELS = ((2, "克制，有事说事"), (4, "熟，但有分寸"), (6, "亲近"),
+                  (8, "很亲，话里带黏"))
+
+
+def _spread(items: list, n: int) -> list:
+    """等距取 n 个：跨时间取样，别让示范全挤在同一天。"""
+    if n < 1 or not items:
+        return []
+    if len(items) <= n:
+        return list(items)
+    step = (len(items) - 1) / (n - 1)
+    return [items[round(i * step)] for i in range(n)]
+
+
+def _exchange_items(msgs: list[Msg], target: str, counterpart: str | None,
+                    limit: int = 8) -> list[str]:
+    """「对方说 → TA 回」的真实相邻交换，整段摘抄，不改写。
+
+    「说话风格」讲的是**句子长什么样**，可像不像更取决于**怎么接话**：
+    人家抱怨一句，TA 是先哄、先笑、还是岔开；问句是被抛回来还是被忽略。
+    这些只能从相邻的消息里捞出来，而且必须是原话——摘录错了，校验层会标出来。
+
+    连着发的几条保留成几个「」，因为"一句话拆成三条发"本身就是这个人的习惯，
+    示范里要看得见。
+    """
+    if not counterpart:
+        return []
+
+    pairs: list[tuple[list[str], list[str]]] = []
+    i = 0
+    while i < len(msgs):
+        j = i
+        theirs: list[str] = []
+        while j < len(msgs) and msgs[j].speaker == counterpart:
+            theirs.append(msgs[j].text)
+            j += 1
+        k = j
+        mine: list[str] = []
+        while k < len(msgs) and msgs[k].speaker == target:
+            mine.append(msgs[k].text)
+            k += 1
+        if theirs and mine:
+            pairs.append((theirs, mine))
+        i = k if k > i else i + 1
+
+    def side(texts: list[str], top: int) -> list[str]:
+        """去掉媒体占位后还有字、且不太长的那几条。"""
+        out = []
+        for text in texts[:top]:
+            if _is_media_only(text):
+                continue
+            cleaned = _clean(BRACKET_TAG_RE.sub(" ", text))
+            if cleaned:
+                out.append(cleaned)
+        return out
+
+    valid: list[tuple[list[str], list[str]]] = []
+    for theirs, mine in pairs:
+        left, right = side(theirs, 3), side(mine, 3)
+        if not left or not right:
+            continue
+        # "对方"那句太短（啊？/不是）是从上一句截下来的半截话，当示范会教出没头没尾的接话
+        if not (4 <= len("".join(left)) <= 40) or len("".join(right)) > 40:
+            continue
+        valid.append((left, right))
+
+    out: list[str] = []
+    seen: set[str] = set()
+    for left, right in _spread(valid, limit):
+        key = "".join(left)[:6]
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append("对方：" + "".join(f"「{x}」" for x in left)
+                   + " → 我：" + "".join(f"「{x}」" for x in right))
+    return out
+
+
+def _warmth_items(msgs: list[Msg], target: str, stats: Stats,
+                  relation: str = "朋友") -> list[str]:
+    """亲疏的刻度，以及"别比它更热"的边界。
+
+    亲密度不能凭"看起来甜不甜"说：同一份记录，有人觉得腻、有人觉得淡。
+    这里只做可数的事——关心表达、亲昵称呼、直球、表情各占多少，
+    合起来给一个 0~10 的档位，再写明**哪些信号在记录里一次都没出现**：
+    "没有出现过的表达"就是模仿时最容易过界的地方。
+    """
+    texts = [m.text for m in msgs if m.speaker == target and m.text.strip()]
+    if not texts:
+        return []
+    n = len(texts)
+    care = sum(1 for t in texts if _CARE_RE.search(t))
+    direct = sum(1 for t in texts if any(w in t for w in DIRECT_WORDS))
+    emoji = sum(1 for t in texts
+                if any(not MEDIA_RE.fullmatch(e) for e in EMOJI_RE.findall(t)))
+    pets = 0 if relation == "同事" else sum(1 for t in texts if any(p in t for p in PET_NAMES))
+
+    score = 0.0
+    if care:
+        score += 3 if _pct(care, n) >= 5 else 2 if _pct(care, n) >= 2 else 1
+    if pets:
+        score += 3 if pets >= 3 else 2
+    if direct:
+        score += 3 if direct >= 3 else 2
+    if emoji:
+        score += 1.5 if _pct(emoji, n) >= 30 else 1
+    score = min(10, round(score))
+    label = "黏糊，甜度很高"
+    for cap, text in _WARMTH_LABELS:
+        if score <= cap:
+            label = text
+            break
+
+    items = [f"亲密度 {score}/10（{label}）：关心类表达 {care} 条、亲昵称呼 {pets} 条、"
+             f"直球表达 {direct} 条、带表情的消息占 {_pct(emoji, n):.0f}%"]
+
+    # 温度的"载体"：亲近主要落在哪儿，模仿时就往哪儿使劲
+    carrier = max((("日常关心", care), ("称呼与亲昵", pets),
+                   ("直接说出口", direct), ("表情与语气", emoji)), key=lambda kv: kv[1])
+    if carrier[1]:
+        items.append(f"温度主要落在{carrier[0]}上：{carrier[1]} 条，"
+                     f"是这个人在记录里最常用来表达亲近的方式")
+
+    # 边界：记录里一次都没出现过的信号（写"没有"是事实，不是引用，校验会跳过这一节）
+    missing = [text for flag, text in ((direct, "「想你 / 喜欢你」这类直球表达"),
+                                       (pets, "亲昵称呼"),
+                                       (care, "关心叮嘱（早点睡、记得吃饭这类）"),
+                                       (emoji, "表情 / 表情包")) if not flag]
+    if missing:
+        items.append("记录里没有出现过的表达：" + "、".join(missing)
+                     + "；模仿时不要凭「看起来应该有」补上")
+
+    gaps = reply_gaps(msgs).get(target, [])
+    if gaps:
+        med = _median(gaps)
+        items.append(f"冷热节奏：通常隔 {_fmt_minutes(med)}回"
+                     + ("（回得快，对话是黏着的）" if med < 3 else
+                        "（不是秒回型，别表现得太即时）"))
+        if score <= 2 and med < 30:
+            # 四类信号全为零不代表这个人冷淡：很多人只是不说，但一直在回。
+            # 直接写"0/10"会让模仿出来的分身比本人冷一截。
+            items.append("别把它读成冷淡：外露的亲昵不多，可对话是黏着的——"
+                         f"平均 {_fmt_minutes(med)}就回一句，亲近在节奏里不在词句里")
+    items.append("别比记录更热：上面每个数字都有出处，超出这一档的话"
+                 "（肉麻的话、秒回、长篇表白、过度关心）一律不要说")
+    return items
+
+
+# ----------------------------------------------------------------------------
 # 七、硬规则（从统计反推的、可验证的底线）
 # ----------------------------------------------------------------------------
 
@@ -945,7 +1090,7 @@ def _rule_items(msgs: list[Msg], target: str, stats: Stats) -> list[str]:
     n = len(texts)
     rules: list[str] = []
 
-    gaps = _reply_gaps(msgs).get(target, [])
+    gaps = reply_gaps(msgs).get(target, [])
     if gaps:
         med = _median(gaps)
         if med < 3:
@@ -1012,7 +1157,9 @@ def distill(msgs: list[Msg], target: str, stats: Stats, desc: str = "",
         "身份": _identity_items(desc),
         "说话风格": style_items,
         "口头禅": phrase_items,
+        "接话方式": _exchange_items(msgs, target, counterpart),
         "情感模式": _emotion_items(msgs, target, relation),
+        "温度与分寸": _warmth_items(msgs, target, stats, relation),
         "关系行为": _relation_items(msgs, target, stats),
         "典型例句": _example_items(msgs, target, phrase_items),
         "硬规则": _rule_items(msgs, target, stats),

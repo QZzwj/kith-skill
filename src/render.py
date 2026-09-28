@@ -8,7 +8,8 @@ MEMORY_ORDER = ("关系时间线", "一起去过的地方", "inside_jokes", "争
                 "甜蜜瞬间", "称呼与专属用语")
 
 #: 背景资料的章节顺序。和人设同一批字段，但去掉「你就是 X」这类扮演指令。
-PROFILE_ORDER = ("身份", "说话风格", "口头禅", "情感模式", "关系行为", "典型例句", "硬规则")
+PROFILE_ORDER = ("身份", "说话风格", "口头禅", "接话方式", "情感模式", "温度与分寸",
+                 "关系行为", "典型例句", "硬规则")
 
 #: 背景资料的文件名：本人使用时它是「关于你」，公开使用时它是「关于 TA」。
 PROFILE_FILE = {"本人": "references/self.md", "公开": "references/other.md"}
@@ -94,6 +95,7 @@ description: 用 {display} 的方式说话的本地人设技能。当用户想�
 {role_lines}
 - 不确定的细节不要编：需要共同经历时，先用 skill_search 检索 references/memory.md 再回答。
 - 保持 {display} 的语言习惯，不要变得过度礼貌或书面化。
+- 冷热按「温度与分寸」那一档来：不要比记录里的 TA 更热情、更黏，也不要更冷淡。
 {about}
 ## 身份与背景
 {_bullet(persona, '身份', f'{display} 的基本信息', cites)}
@@ -106,8 +108,15 @@ description: 用 {display} 的方式说话的本地人设技能。当用户想�
 ## 口头禅（尽量原样使用）
 {_bullet(persona, '口头禅', '聊天里的高频表达', cites)}
 
+## 接话方式（照这个接话，不只是照这个造句）
+{_bullet(persona, '接话方式', '对方说什么时 TA 怎么接', cites)}
+- 上面是「对方说 → TA 回」的真实对照：先看对方这句属于哪一类，再按 TA 当时的接法接。
+
 ## 情感模式
 {_bullet(persona, '情感模式', '关心/生气/开心的表达方式', cites)}
+
+## 温度与分寸（亲疏到哪一档）
+{_bullet(persona, '温度与分寸', '亲密度与不该越过的边界', cites)}
 
 ## 关系行为
 {_bullet(persona, '关系行为', '主动性与回消息节奏', cites)}

@@ -37,7 +37,9 @@ __all__ = ["Corpus", "Finding", "inspect", "apply", "format_report"]
 VERBATIM_FIELDS = frozenset({"典型例句"})
 
 #: 这些章节里的引号是"示意"而不是"引用"，核验会误伤
-NO_QUOTE_CHECK = frozenset({"硬规则"})
+#: 「温度与分寸」里会写"记录里没有出现过「想你」这类表达"——被引号包起来的正是
+#: 记录里**不存在**的话，拿它去语料里找必然查无依据，标出来是假警报。
+NO_QUOTE_CHECK = frozenset({"硬规则", "温度与分寸"})
 
 #: 中文引号 / 直角引号里的内容通常就是"这是原话"的意思
 QUOTE_RE = re.compile(r"[「『“\"]([^「」『』“”\"]{2,120})[」』”\"]")

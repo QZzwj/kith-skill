@@ -6,6 +6,8 @@ __pycache__/
 
 # JSON 文件
 *.json
+# 仓库自带的合成示例（教程与截图都用它）——不含任何真实聊天记录
+!samples/*.json
 
 # 杂项
 zx/

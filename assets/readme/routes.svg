@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="440" viewBox="0 0 1200 440" role="img"
+     aria-labelledby="rt-title rt-desc"
+     font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif">
+  <title id="rt-title">xpskill 的两条路：网页工作台与命令行，产物完全一致</title>
+  <desc id="rt-desc">白色卡片左右对照：左侧是路线 A 网页工作台的四步操作，右侧是路线 B 命令行的四个常用组合；底部说明两条路产出同一份 SKILL.md、references/ 与 zip。</desc>
+
+  <rect width="1200" height="440" rx="26" fill="#ffffff"/>
+  <rect x="0.5" y="0.5" width="1199" height="439" rx="26" fill="none" stroke="#16203F" stroke-opacity="0.08"/>
+
+  <g id="heading">
+    <text x="64" y="70" font-size="18" fill="#1246FF" font-family="ui-monospace,Consolas,monospace">两条路</text>
+    <text x="64" y="118" font-size="42" font-weight="700" fill="#16203F">网页工作台 或 命令行，产物完全一致</text>
+    <text x="64" y="154" font-size="20" fill="#4A5268">只差操作方式：一条点鼠标看界面，一条写成脚本。</text>
+  </g>
+
+  <g id="route-a">
+    <rect x="64" y="186" width="528" height="170" rx="18" fill="#F7FBFF" stroke="#16203F" stroke-opacity="0.07"/>
+    <text x="88" y="230" font-size="22" fill="#0A35CC" font-family="ui-monospace,Consolas,monospace">路线 A · python -m src.web</text>
+    <text x="88" y="268" font-size="20" fill="#4A5268">拖入记录 → 看解析诊断</text>
+    <text x="88" y="298" font-size="20" fill="#4A5268">填配置 → 开始蒸馏 → 读日志</text>
+    <text x="88" y="328" font-size="20" fill="#4A5268">右栏校验、试聊，满意了再下载 zip</text>
+  </g>
+  <g id="route-b">
+    <rect x="608" y="186" width="528" height="170" rx="18" fill="#F7FBFF" stroke="#16203F" stroke-opacity="0.07"/>
+    <text x="632" y="230" font-size="22" fill="#0A35CC" font-family="ui-monospace,Consolas,monospace">路线 B · python3 ex_distill.py</text>
+    <text x="632" y="268" font-size="20" fill="#4A5268">一条命令跑完整条流水线</text>
+    <text x="632" y="298" font-size="20" fill="#4A5268">--device 直传设备，--both 双向蒸馏</text>
+    <text x="632" y="328" font-size="20" fill="#4A5268">可脚本化、可批处理、可进 CI</text>
+  </g>
+
+  <g id="same-output">
+    <rect x="64" y="380" width="1072" height="44" rx="13" fill="#EEF2FF"/>
+    <text x="600" y="409" font-size="18" fill="#0A35CC" text-anchor="middle" font-family="ui-monospace,Consolas,monospace">产物一致：SKILL.md + references/ + &lt;name&gt;.zip</text>
+  </g>
+</svg>

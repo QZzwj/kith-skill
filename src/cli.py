@@ -233,11 +233,15 @@ def main(argv=None) -> int:
         memory_count = sum(len(v) for v in memory.values())
         print(f"      {main_name}：说话风格 {len(persona.get('说话风格', []))} 条、"
               f"口头禅 {len(persona.get('口头禅', []))} 条、"
-              f"情感模式 {len(persona.get('情感模式', []))} 条、关系行为 {len(persona.get('关系行为', []))} 条、"
+              f"接话方式 {len(persona.get('接话方式', []))} 条、"
+              f"情感模式 {len(persona.get('情感模式', []))} 条、"
+              f"温度与分寸 {len(persona.get('温度与分寸', []))} 条、"
+              f"关系行为 {len(persona.get('关系行为', []))} 条、"
               f"典型例句 {len(persona.get('典型例句', []))} 条、关系记忆 {memory_count} 条")
         if both:
             print(f"      {back_name}：说话风格 {len(back_persona.get('说话风格', []))} 条、"
                   f"口头禅 {len(back_persona.get('口头禅', []))} 条、"
+                  f"接话方式 {len(back_persona.get('接话方式', []))} 条、"
                   f"典型例句 {len(back_persona.get('典型例句', []))} 条")
 
     print("[5/6] 校验结论")

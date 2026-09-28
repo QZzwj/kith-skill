@@ -1,0 +1,71 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="680" viewBox="0 0 1200 680" role="img"
+     aria-labelledby="wf-title wf-desc"
+     font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif">
+  <title id="wf-title">xpskill 的六步流水线：解析、统计画像、挑选代表片段、蒸馏、校验结论、打包</title>
+  <desc id="wf-desc">白色卡片：顶部是标题；中部是六张步骤卡，每张写清这一步做什么、产出什么、你可以核对什么；底部说明 LLM 失败时如何退回离线抽取式蒸馏。</desc>
+
+  <rect width="1200" height="680" rx="26" fill="#ffffff"/>
+  <rect x="0.5" y="0.5" width="1199" height="679" rx="26" fill="none" stroke="#16203F" stroke-opacity="0.08"/>
+
+  <g id="heading">
+    <text x="64" y="70" font-size="18" fill="#1246FF" font-family="ui-monospace,Consolas,monospace">机制</text>
+    <text x="64" y="118" font-size="42" font-weight="700" fill="#16203F">六步流水线，每一步都能单独核对</text>
+    <text x="64" y="154" font-size="20" fill="#4A5268">日志里就是这六个标题；离线那趟几秒跑完，LLM 那趟只有第 4 步会慢。</text>
+  </g>
+
+  <g id="steps">
+    <g>
+      <rect x="64" y="186" width="346" height="200" rx="18" fill="#F7FBFF" stroke="#16203F" stroke-opacity="0.07"/>
+      <text x="88" y="228" font-size="18" fill="#1246FF" font-family="ui-monospace,Consolas,monospace">[1/6]</text>
+      <text x="88" y="264" font-size="24" font-weight="600" fill="#16203F">解析聊天记录</text>
+      <text x="88" y="302" font-size="20" fill="#4A5268">认格式、认编码、认说话人</text>
+      <text x="88" y="332" font-size="20" fill="#4A5268">出：条数、时间跨度、候选人</text>
+      <text x="88" y="362" font-size="20" fill="#4A5268">核：带时间戳的条数、人数</text>
+    </g>
+    <g>
+      <rect x="431" y="186" width="346" height="200" rx="18" fill="#F7FBFF" stroke="#16203F" stroke-opacity="0.07"/>
+      <text x="455" y="228" font-size="18" fill="#1246FF" font-family="ui-monospace,Consolas,monospace">[2/6]</text>
+      <text x="455" y="264" font-size="24" font-weight="600" fill="#16203F">统计画像</text>
+      <text x="455" y="302" font-size="20" fill="#4A5268">口头禅候选、深夜消息占比</text>
+      <text x="455" y="332" font-size="20" fill="#4A5268">数字和原话都来自记录本身</text>
+      <text x="455" y="362" font-size="20" fill="#4A5268">核：候选名单像不像本人</text>
+    </g>
+    <g>
+      <rect x="798" y="186" width="346" height="200" rx="18" fill="#F7FBFF" stroke="#16203F" stroke-opacity="0.07"/>
+      <text x="822" y="228" font-size="18" fill="#1246FF" font-family="ui-monospace,Consolas,monospace">[3/6]</text>
+      <text x="822" y="264" font-size="24" font-weight="600" fill="#16203F">挑选代表片段</text>
+      <text x="822" y="302" font-size="20" fill="#4A5268">采样一批有代表性的对话</text>
+      <text x="822" y="332" font-size="20" fill="#4A5268">离线模式直接读全部记录</text>
+      <text x="822" y="362" font-size="20" fill="#4A5268">核：关键话题有没有被落下</text>
+    </g>
+    <g>
+      <rect x="64" y="406" width="346" height="200" rx="18" fill="#FFFBEC" stroke="#FFCC14"/>
+      <text x="88" y="448" font-size="18" fill="#7D6620" font-family="ui-monospace,Consolas,monospace">[4/6]</text>
+      <text x="88" y="484" font-size="24" font-weight="600" fill="#16203F">蒸馏</text>
+      <text x="88" y="522" font-size="20" fill="#4A5268">离线抽取 或 LLM 归纳</text>
+      <text x="88" y="552" font-size="20" fill="#4A5268">两套引擎字段结构一致</text>
+      <text x="88" y="582" font-size="20" fill="#4A5268">跑不动就退离线，产物照旧</text>
+    </g>
+    <g>
+      <rect x="431" y="406" width="346" height="200" rx="18" fill="#F7FBFF" stroke="#16203F" stroke-opacity="0.07"/>
+      <text x="455" y="448" font-size="18" fill="#1246FF" font-family="ui-monospace,Consolas,monospace">[5/6]</text>
+      <text x="455" y="484" font-size="24" font-weight="600" fill="#16203F">校验结论</text>
+      <text x="455" y="522" font-size="20" fill="#4A5268">每条原话、事件回记录核对</text>
+      <text x="455" y="552" font-size="20" fill="#4A5268">出：命中 / 改写 / 未找到</text>
+      <text x="455" y="582" font-size="20" fill="#4A5268">没依据的交给 --strict 删掉</text>
+    </g>
+    <g>
+      <rect x="798" y="406" width="346" height="200" rx="18" fill="#F7FBFF" stroke="#16203F" stroke-opacity="0.07"/>
+      <text x="822" y="448" font-size="18" fill="#1246FF" font-family="ui-monospace,Consolas,monospace">[6/6]</text>
+      <text x="822" y="484" font-size="24" font-weight="600" fill="#16203F">打包</text>
+      <text x="822" y="522" font-size="20" fill="#4A5268">SKILL.md + references/ + zip</text>
+      <text x="822" y="552" font-size="20" fill="#4A5268">通常 1~3 MB，整包默认脱敏</text>
+      <text x="822" y="582" font-size="20" fill="#4A5268">传上设备，设为主技能</text>
+    </g>
+  </g>
+
+  <g id="fallback-note">
+    <line x1="64" y1="634" x2="1136" y2="634" stroke="#16203F" stroke-opacity="0.08"/>
+    <text x="64" y="664" font-size="18" fill="#4A5268">LLM 整批失败会退回离线抽取；只挂一半就保住成功的那半，缺的用离线补，并在文件里注明来历。</text>
+  </g>
+</svg>

@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="600" viewBox="0 0 1200 600" role="img"
+     aria-labelledby="wm-title wm-desc"
+     font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif">
+  <title id="wm-title">xpskill 网页工作台界面地图：左栏三张卡（进料、配置、执行），右栏五个标签（运行日志、校验、SKILL.md、关系记忆、试聊）</title>
+  <desc id="wm-desc">白色卡片：左边一列画三个操作步骤卡，右边一列画五个验收标签及各自要看的东西；这是界面示意图，真实界面见下方截图。</desc>
+
+  <rect width="1200" height="600" rx="26" fill="#ffffff"/>
+  <rect x="0.5" y="0.5" width="1199" height="599" rx="26" fill="none" stroke="#16203F" stroke-opacity="0.08"/>
+
+  <g id="heading">
+    <text x="64" y="70" font-size="18" fill="#1246FF" font-family="ui-monospace,Consolas,monospace">界面地图 · 示意图</text>
+    <text x="64" y="118" font-size="42" font-weight="700" fill="#16203F">左栏三张卡，右栏五个标签</text>
+    <text x="64" y="154" font-size="20" fill="#4A5268">左边负责把包造出来，右边负责验收：日志、校验、产物、试聊。</text>
+  </g>
+
+  <g id="left-rail">
+    <g>
+      <rect x="64" y="186" width="380" height="104" rx="18" fill="#F7FBFF" stroke="#16203F" stroke-opacity="0.07"/>
+      <text x="88" y="222" font-size="17" fill="#1246FF" font-family="ui-monospace,Consolas,monospace">1 · 进料</text>
+      <text x="88" y="254" font-size="22" font-weight="600" fill="#16203F">拖入聊天记录</text>
+      <text x="88" y="280" font-size="18" fill="#4A5268">解析器、条数、时间跨度</text>
+    </g>
+    <g>
+      <rect x="64" y="302" width="380" height="104" rx="18" fill="#F7FBFF" stroke="#16203F" stroke-opacity="0.07"/>
+      <text x="88" y="338" font-size="17" fill="#1246FF" font-family="ui-monospace,Consolas,monospace">2 · 配置</text>
+      <text x="88" y="370" font-size="22" font-weight="600" fill="#16203F">填配置</text>
+      <text x="88" y="396" font-size="18" fill="#4A5268">技能名、我是谁、蒸馏谁</text>
+    </g>
+    <g>
+      <rect x="64" y="418" width="380" height="104" rx="18" fill="#FFFBEC" stroke="#FFCC14"/>
+      <text x="88" y="454" font-size="17" fill="#7D6620" font-family="ui-monospace,Consolas,monospace">3 · 执行</text>
+      <text x="88" y="486" font-size="22" font-weight="600" fill="#16203F">点「开始蒸馏」</text>
+      <text x="88" y="512" font-size="18" fill="#4A5268">跑完下载 zip，或直接上传设备</text>
+    </g>
+  </g>
+
+  <g id="right-tabs">
+    <g>
+      <rect x="476" y="186" width="660" height="64" rx="14" fill="#F7FBFF" stroke="#16203F" stroke-opacity="0.07"/>
+      <text x="500" y="226" font-size="22" font-weight="600" fill="#16203F">运行日志</text>
+      <text x="1112" y="226" font-size="18" fill="#4A5268" text-anchor="end">六步实时输出，末尾给包体积</text>
+    </g>
+    <g>
+      <rect x="476" y="256" width="660" height="64" rx="14" fill="#F7FBFF" stroke="#16203F" stroke-opacity="0.07"/>
+      <text x="500" y="296" font-size="22" font-weight="600" fill="#16203F">校验</text>
+      <text x="1112" y="296" font-size="18" fill="#4A5268" text-anchor="end">印章上的数字＝待确认条数，0 最好</text>
+    </g>
+    <g>
+      <rect x="476" y="326" width="660" height="64" rx="14" fill="#F7FBFF" stroke="#16203F" stroke-opacity="0.07"/>
+      <text x="500" y="366" font-size="22" font-weight="600" fill="#16203F">SKILL.md</text>
+      <text x="1112" y="366" font-size="18" fill="#4A5268" text-anchor="end">扫「硬规则」「口头禅」像不像</text>
+    </g>
+    <g>
+      <rect x="476" y="396" width="660" height="64" rx="14" fill="#F7FBFF" stroke="#16203F" stroke-opacity="0.07"/>
+      <text x="500" y="436" font-size="22" font-weight="600" fill="#16203F">关系记忆</text>
+      <text x="1112" y="436" font-size="18" fill="#4A5268" text-anchor="end">时间线里的人名和时间对不对</text>
+    </g>
+    <g>
+      <rect x="476" y="466" width="660" height="64" rx="14" fill="#EEF2FF" stroke="#1246FF" stroke-opacity="0.35"/>
+      <text x="500" y="506" font-size="22" font-weight="600" fill="#16203F">试聊</text>
+      <text x="1112" y="506" font-size="18" fill="#4A5268" text-anchor="end">直接读磁盘上的产物，说两句</text>
+    </g>
+  </g>
+
+  <g id="caption">
+    <text x="64" y="562" font-size="18" fill="#4A5268">工作台只监听 127.0.0.1，前端不加载 CDN；改完 src/ 下的代码要重启，端口被占用时它拒绝启动。</text>
+  </g>
+</svg>
