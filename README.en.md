@@ -19,7 +19,7 @@ How to read: [What you get](#what-you-get) · [Six-step pipeline](#the-six-step-
 ## First look
 
 <p align="center">
-<img src="docs/images/workbench.png" width="100%" alt="The xpskill web workbench: input · settings · run on the left, log / verification / SKILL.md / memory / try-chat on the right">
+<img src="docs/images/tutorial-a4-log.png" width="100%" alt="The xpskill web workbench: input · settings · run on the left, log / verification / SKILL.md / memory / try-chat on the right">
 </p>
 
 One web workbench, two commands, two routes. The left column builds the pack and the right column accepts it: as soon as a run finishes you can say a couple of things to them under "try-chat", and if it does not feel right, edit the artifact by hand or change the recipe and re-run.
