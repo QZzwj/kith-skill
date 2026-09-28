@@ -10,7 +10,7 @@
 
 **Turn a chat log into a persona skill pack you can drop onto a device**: `SKILL.md` + `references/memory.md` + `<name>.zip`.
 
-Python 3.10+ standard library only: no `pip install`, no model downloads, and no network unless you explicitly turn on LLM distillation. The result loads into tools that support the Skill format or a similar packaging mechanism; it currently targets xinpai-bot (open-sourcing in progress).
+Python 3.10+ standard library only: no `pip install`, no model downloads, and no network unless you explicitly turn on LLM distillation. The result loads into tools that support the Skill format or a similar packaging mechanism; it currently targets QZdesk (open-sourcing in progress).
 
 > Every nickname, skill name, path and API key in this document is a placeholder. Replace them with your own values, and check the generated files for personal information before uploading.
 

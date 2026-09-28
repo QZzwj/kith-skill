@@ -15,7 +15,7 @@ from .render import PROFILE_FILE, render_memory_md, render_profile_md, render_sk
 
 def build_args(argv=None):
     p = argparse.ArgumentParser(
-        description="把聊天记录蒸馏成xinpai-bot可用的人设技能",
+        description="把聊天记录蒸馏成QZdesk可用的人设技能",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="输出：<out>/<name>/SKILL.md + references/memory.md（+ 参考资料层），"
                "以及 <out>/<name>.zip",

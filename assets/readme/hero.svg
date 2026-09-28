@@ -16,7 +16,7 @@
   <rect width="1200" height="420" rx="26" fill="url(#glass)"/>
 
   <g id="title-block">
-    <text x="64" y="84" font-size="18" fill="#4A5268">聊天记录 → 人设技能包 · 适配 xinpai-bot · Python 3.10+ 零依赖</text>
+    <text x="64" y="84" font-size="18" fill="#4A5268">聊天记录 → 人设技能包 · 适配 QZdesk · Python 3.10+ 零依赖</text>
     <text x="64" y="160" font-size="76" font-weight="700" fill="#16203F" letter-spacing="-1">kith-skill</text>
     <text x="64" y="206" font-size="30" fill="#39415C">把一份聊天记录，变成能装进设备的人设技能包</text>
     <text x="64" y="244" font-size="20" fill="#4A5268" font-family="ui-monospace,Consolas,monospace">SKILL.md + references/memory.md + &lt;name&gt;.zip</text>
