@@ -19,7 +19,7 @@
 ## 先看结果
 
 <p align="center">
-<img src="docs/images/workbench.png" width="100%" alt="xpskill 网页工作台：左栏进料·配置·执行，右栏运行日志/校验/SKILL.md/关系记忆/试聊">
+<img src="docs/images/tutorial-a4-log.png" width="100%" alt="xpskill 网页工作台：左栏进料·配置·执行，右栏运行日志/校验/SKILL.md/关系记忆/试聊">
 </p>
 
 一个网页工作台，两条命令，两条路。左边把包造出来，右边立刻验收：跑完就能在「试聊」里跟 TA 说两句，不满意就手改产物或换配方重跑。
