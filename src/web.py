@@ -32,12 +32,15 @@ import time
 import uuid
 import webbrowser
 from collections import Counter
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote, urlparse
 
-from . import cli
+from . import cli, storage, versions, scenarios, evaluation, feedback, privacy_review
+from .conversations import reply_exchanges, select_exchanges
 from .llm import CHAT_TEMPERATURE, llm_call, llm_chat
+from .models import Msg
 from .parsers import diagnose, load_messages
 
 __all__ = ["main"]
@@ -51,6 +54,7 @@ SESSION_DIR = Path(tempfile.mkdtemp(prefix="kith-skill-web-"))
 OUT_ROOT = Path.cwd() / "out"
 
 _LOCK = threading.Lock()
+_RUN_LOCK = threading.Lock()
 _UPLOADS: dict[str, Path] = {}
 _JOBS: dict[str, "Job"] = {}
 
@@ -155,9 +159,9 @@ PLAY_HINT = """【现在是本地试聊：你就是 {name}，正在微信上跟�
 
 照下面这些说话，别把它们当资料复述：
 
-- 短。多数时候一行就够，最多两三行；也可以像微信那样分几条连着说（用换行分开）。
-- 不打句尾标点，别写得工整；语气词、错字、口癖按上面的习惯来。
-- 先看「接话方式」里的对照：对方这句属于哪一类，TA 当时是怎么接的，就照那个接法接。
+- 句长、标点和连发方式按此人的技能与原话来；需要分几条时用换行，不统一压成短句。
+- 先判断当前话题的情境与情绪，再参考「情境与接法」和「接话方式」；单次示范只用于相似语境。
+- 学回应动作和措辞，不照搬旧事实、地点或承诺；认真难过时不要机械套用嬉闹顶嘴。
 - 亲疏按「温度与分寸」那一档来：别比 TA 在记录里更黏、更客气、更会哄，也别更冷。
 - 别解释、别总结、别列条目、别写 markdown，也别问"还需要我做什么"这种话。
 - 不必每句都反问。他随口说说，你随口接一句；冷场也没关系。
@@ -176,7 +180,7 @@ _EX_MAX = (28, 26)
 _EX_BAD = re.compile(r"\[(?:图片|视频|语音|文件|链接|表情|通话|引用|微信转账|红包|位置|名片|"
                      r"手机号|身份证|银行卡|邮箱|地址)\]")
 #: 原记录逐行形如 `2024-02-04 19:15 黄泉清：云台是什么`
-_EX_LINE = re.compile(r"^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}\s+(.+?)[:：](.*)$")
+_EX_LINE = re.compile(r"^(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}|（无时间）)\s+(.+?)[:：](.*)$")
 #: 回复/引用类的前缀标记：`[回复消息]什么？` 这种，标记剥掉、正文留下
 _EX_STRIP = re.compile(r"^(?:\[(?:回复消息|引用|拍一拍|知识增加)\])+")
 #: 各种 `[…]` 标记（表情、媒体、引用），用来量"除去标记还剩多少真话"
@@ -189,7 +193,7 @@ _DROP_LINE = re.compile(r"skill_search|skill_read|--desc|--no-redact")
 
 #: 示范对话的缓存：键是（transcript 目录, 目录里最新 mtime）→（示范文本, 段数）。
 #: 每开一次试聊页都要算一遍，二十几份 transcript 读起来不便宜，而它们几乎不变。
-_EXAMPLE_CACHE: dict[tuple[str, float], tuple[str, int]] = {}
+_EXAMPLE_CACHE: dict[tuple, tuple[str, int]] = {}
 
 
 class PlayTarget:
@@ -217,8 +221,8 @@ def _skill_root(name: str) -> Path | None:
     只认 out 的直接子目录：`Path(...).name` 先削掉任何路径成分，再校验父目录，
     免得 `?skill=../../etc` 这种把服务端读文件的接口带出目录。
     """
-    clean = Path(str(name or "").strip()).name
-    if not clean or clean in (".", ".."):
+    clean = str(name or '').strip()
+    if not re.fullmatch(r'[\w.\-]+', clean) or clean.lower() in ('.', '..', '.kith'):
         return None
     root = (OUT_ROOT / clean).resolve()
     if root.parent != OUT_ROOT.resolve() or not (root / "SKILL.md").is_file():
@@ -236,7 +240,7 @@ def _skill_list() -> list[dict]:
         return []
     items = []
     for child in OUT_ROOT.iterdir():
-        if not child.is_dir() or not (child / "SKILL.md").is_file():
+        if child.name.startswith('.') or not _skill_root(child.name):
             continue
         target = PlayTarget(OUT_ROOT, child.name)
         files = _persona_files(target)
@@ -270,71 +274,60 @@ def _persona_files(target: Job | PlayTarget) -> list[Path]:
     return [p for p in files if p.exists()]
 
 
-def _rows(text: str) -> list[tuple[str, str]]:
-    """原记录逐行 → [(说话人, 内容)]。顺手剥掉回复/引用类的前缀标记。"""
+def _rows(text: str) -> list[Msg]:
+    """保留时间戳，试聊示范与蒸馏使用相同的会话边界。"""
     rows = []
     for line in text.splitlines():
         match = _EX_LINE.match(line.strip())
         if match:
-            said = _EX_STRIP.sub("", match.group(2)).strip()
-            rows.append((match.group(1).strip(), said))
+            said = _EX_STRIP.sub("", match.group(3)).strip()
+            try:
+                ts = datetime.strptime(match.group(1), "%Y-%m-%d %H:%M")
+            except ValueError:
+                ts = None
+            rows.append(Msg(ts, match.group(2).strip(), said))
     return rows
 
 
 def _persona_name(target: Job | PlayTarget) -> str:
     """人设在原记录里叫什么。
 
-    先看这次运行的 --target；磁盘上的老产物没有 argv，就看带路文件的标题
-    （`# 参考资料（黄泉清）`）。两处都没有才交给调用方按出现次数猜。
+    优先读带路文件中的主身份，避免公开版错误取到 --target 的对方身份；
+    无带路文件时再取命令行，最后交给调用方按出现次数猜。
     """
-    name = _argv_value(target, "--target").strip()
-    if name:
-        return name
     readme = target.out_dir / target.name / "references" / "README.md"
     if readme.exists():
         match = re.search(r"^#\s*参考资料[（(]([^）)]+)[）)]", readme.read_text(encoding="utf-8"),
                           re.M)
         if match:
             return match.group(1).strip()
-    return ""
+    if _argv_value(target, "--audience") == "公开":
+        return _argv_value(target, "--me").split(",")[0].strip()
+    return _argv_value(target, "--target").strip()
 
 
-def _sides(rows: list[tuple[str, str]], speaker: str) -> tuple[str, str]:
+def _sides(rows: list[Msg], speaker: str) -> tuple[str, str]:
     """认出原记录里的两侧：TA 的名字，以及"对方"的名字。
 
     对方的自称**不固定**：这次运行给了 --me 就是那个名字（老菜叶），没给才是「我」。
     所以不能写死，按出现次数认人——除系统消息外，除 TA 外出现最多的那个。
     """
-    names = Counter(who for who, _ in rows if who != "系统消息" and who != speaker)
+    names = Counter(m.speaker for m in rows if m.speaker != "系统消息" and m.speaker != speaker)
     if not speaker:
-        names = Counter(who for who, _ in rows if who != "系统消息")
+        names = Counter(m.speaker for m in rows if m.speaker != "系统消息")
         speaker = names.most_common(1)[0][0] if names else ""
-        names = Counter(who for who, _ in rows if who != "系统消息" and who != speaker)
+        names = Counter(m.speaker for m in rows if m.speaker != "系统消息" and m.speaker != speaker)
     return speaker, (names.most_common(1)[0][0] if names else "")
 
 
-def _exchanges(rows: list[tuple[str, str]], speaker: str,
+def _exchanges(rows: list[Msg], speaker: str,
                other: str) -> list[tuple[list[str], list[str]]]:
     """把原记录切成「对方连着说几句 → TA 连着回几句」。
 
     连着发的几条合成一段（而不是逐条配一对），因为"他喜欢把一件事拆成几条说"
     本身就是这个人的习惯，示范里要看得见。
     """
-    out: list[tuple[list[str], list[str]]] = []
-    i = 0
-    while i < len(rows):
-        mine, j = [], i
-        while j < len(rows) and rows[j][0] == other:
-            mine.append(rows[j][1])
-            j += 1
-        theirs, k = [], j
-        while k < len(rows) and rows[k][0] == speaker:
-            theirs.append(rows[k][1])
-            k += 1
-        if theirs:
-            out.append((mine, theirs))
-        i = k if k > i else i + 1
-    return out
+    return [(e.incoming, e.reply) for e in reply_exchanges(rows, speaker, other)]
 
 
 def _example_ok(pair: tuple[list[str], list[str]]) -> bool:
@@ -385,7 +378,8 @@ def _play_examples(target: Job | PlayTarget) -> tuple[str, int]:
     if not paths:
         return "", 0
     try:
-        key = (str(folder), max(p.stat().st_mtime for p in paths))
+        key = (str(folder), tuple((p.name, p.stat().st_mtime_ns, p.stat().st_size) for p in paths),
+               _persona_name(target))
     except OSError:
         return "", 0
     with _LOCK:
@@ -394,7 +388,8 @@ def _play_examples(target: Job | PlayTarget) -> tuple[str, int]:
         return cached
 
     speaker = _persona_name(target)
-    valid: list[tuple[list[str], list[str]]] = []
+    valid = []
+    session_offset = 0
     for path in _spread(paths, 3):
         try:
             rows = _rows(path.read_text(encoding="utf-8"))
@@ -402,11 +397,18 @@ def _play_examples(target: Job | PlayTarget) -> tuple[str, int]:
             continue
         speaker, other = _sides(rows, speaker)
         if speaker and other:
-            valid += [pair for pair in _exchanges(rows, speaker, other) if _example_ok(pair)]
+            examples = reply_exchanges(rows, speaker, other)
+            for example in examples:
+                example.session += session_offset
+            valid += [e for e in examples if _example_ok((e.incoming, e.reply))]
+            session_offset = max((e.session for e in examples), default=session_offset - 1) + 1
 
-    picks = _spread(valid, PLAY_EXAMPLES)
+    picks = select_exchanges(valid, PLAY_EXAMPLES)
+    if not picks:
+        return "", 0
     lines = ["【你平时就这么说话（原记录节选，只学腔调，不要接着它们聊）】", ""]
-    for mine, theirs in picks:
+    for exchange in picks:
+        mine, theirs = exchange.incoming, exchange.reply
         lines += [f"对方：{x}" for x in mine]
         lines += [f"我：{x}" for x in theirs]        # 模型视角：我＝人物本人
         lines.append("")
@@ -447,7 +449,7 @@ def _strip_report_noise(text: str) -> str:
     return "\n".join(out).strip()
 
 
-def _persona_prompt(target: Job | PlayTarget) -> str:
+def _persona_prompt(target: Job | PlayTarget, text: str = "") -> str:
     """把产物拼成陪聊用的那段 system。
 
     试聊不做检索：整套塞进去（本地测试，几 KB）比模拟 skill_search 更接近"人设完整"。
@@ -462,6 +464,15 @@ def _persona_prompt(target: Job | PlayTarget) -> str:
     examples, _ = _play_examples(target)
     if examples:
         blocks.append(examples)
+    root = target.out_dir / target.name
+    routes = _routes(root)
+    current = scenarios.prompt(text, routes)
+    if current:
+        blocks.append(current)
+    corrections = feedback.render_rules(feedback.read(root), routes, text=text)
+    if corrections:
+        blocks.append(corrections)
+    blocks.append('记忆里的日期只表示当时提及。历史计划与旧承诺的当前有效性需要确认；不推断已经兑现，也不重新许诺。')
     blocks.append(PLAY_HINT.format(name=_persona_title(target)))
     return "\n\n---\n\n".join(blocks)
 
@@ -496,6 +507,7 @@ def _play_info(target: Job | PlayTarget) -> dict:
         "model": _argv_value(target, "--model") or DEFAULT_MODEL,
         "has_key": bool(_argv_value(target, "--api-key")),
         "offline": "--no-llm" in target.argv,
+        **versions.state(root),
     }
 
 
@@ -594,13 +606,39 @@ def _run_job(job: Job) -> None:
     job.state = "running"
     writer = _Writer(job)
     try:
-        with contextlib.redirect_stdout(writer), contextlib.redirect_stderr(writer):
+        with _RUN_LOCK, contextlib.redirect_stdout(writer), contextlib.redirect_stderr(writer):
             job.code = cli.main(job.argv)
     except Exception as exc:  # 兜底：任何异常都要落到日志里，不能静默
         job.write(f"\n[web] 执行异常：{type(exc).__name__}: {exc}\n")
         job.code = 1
     finally:
         job.state = "done" if job.code == 0 else "failed"
+
+
+def _routes(root: Path) -> list[dict]:
+    return (storage.load(root / 'references/scenarios.json', {}) or {}).get('scenarios', [])
+
+
+def _reply(target: Job | PlayTarget, payload: dict, messages: list) -> dict:
+    """One model call shared by trial chat and explicit regression runs."""
+    turns = _history_turns(messages)
+    if not turns:
+        raise ValueError('没有收到对话内容')
+    api_key = str(payload.get('api_key') or '').strip() or _argv_value(target, '--api-key')
+    if not api_key:
+        raise ValueError('请填写 API Key 后再调用模型')
+    root = target.out_dir / target.name
+    with storage.lock(root):
+        state = versions.state(root)
+        system = _persona_prompt(target, turns[-1]['content'])
+        matched = scenarios.route(turns[-1]['content'], _routes(root)) or {}
+    started = time.monotonic()
+    reply = llm_chat(str(payload.get('base_url') or '').strip() or _argv_value(target, '--base-url') or DEFAULT_BASE_URL,
+                     api_key, str(payload.get('model') or '').strip() or _argv_value(target, '--model') or DEFAULT_MODEL,
+                     system, turns, temperature=_chat_temperature(payload))
+    reply = re.sub(r'^\s*(?:TA|对方|你|我)\s*[:：]\s*', '', reply.strip())
+    return {'reply': _unwrap_hard_breaks(reply), 'seconds': round(time.monotonic() - started, 1),
+            'skill': root.name, 'scenario_id': matched.get('id', ''), **state}
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -649,7 +687,8 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _payload(self) -> dict:
         try:
-            return json.loads(self._body().decode("utf-8"))
+            value = json.loads(self._body().decode("utf-8"))
+            return value if isinstance(value, dict) else {}
         except Exception:
             return {}
 
@@ -668,6 +707,8 @@ class _Handler(BaseHTTPRequestHandler):
             if STATIC_DIR not in target.parents:
                 return self._json({"error": "路径不合法"}, 403)
             return self._file(target)
+        if route.startswith('/api/workbench/'):
+            return self._workbench(route)
         if route.startswith("/api/job/"):
             job = _JOBS.get(route.rsplit("/", 1)[-1])
             return self._json(job.snapshot() if job else {"error": "任务不存在"}, 200 if job else 404)
@@ -703,6 +744,8 @@ class _Handler(BaseHTTPRequestHandler):
     # ---------------------------------------------------------------- POST
     def do_POST(self):  # noqa: N802
         parsed = urlparse(self.path)
+        if parsed.path.startswith('/api/workbench/'):
+            return self._workbench(unquote(parsed.path), post=True)
         if parsed.path == "/api/parse":
             return self._parse(parsed)
         if parsed.path == "/api/run":
@@ -710,6 +753,88 @@ class _Handler(BaseHTTPRequestHandler):
         if parsed.path == "/api/chat":
             return self._chat()
         return self._json({"error": "没有这个接口"}, 404)
+
+    def _workbench(self, route: str, post: bool = False) -> None:
+        parts = route[len('/api/workbench/'):].split('/')
+        if len(parts) != 2:
+            return self._json({'error': '路径不合法'}, 400)
+        name, action = parts
+        root = _skill_root(name)
+        if not root:
+            return self._json({'error': '找不到这份技能'}, 404)
+        payload = self._payload() if post else {}
+        try:
+            if post and action == 'evaluate-model':
+                case = next((c for c in evaluation.cases_for(root, _routes(root)) if c['id'] == payload.get('case')), None)
+                if not case:
+                    raise ValueError('用例不存在')
+                if payload.get('fingerprint') != versions.fingerprint(root):
+                    raise ValueError('技能内容已变化，请刷新后重新测评')
+                job = next((j for j in reversed(list(_JOBS.values())) if j.name == name and j.state == 'done'), None)
+                result = _reply(job or PlayTarget(OUT_ROOT, name), payload, [{'role': 'user', 'content': case['prompt']}])
+                # A concurrent edit must not attribute an old response to new content.
+                if result['fingerprint'] != payload.get('fingerprint'):
+                    raise ValueError('技能内容已变化，请重新测评')
+                report = evaluation.save(root, {case['id']: result['reply']}, _routes(root), result['fingerprint'])
+                return self._json({'case': case['id'], **result, 'report': report})
+            with storage.lock(root):
+                if not post and action == 'package':
+                    return self._json(Job('', [], root.parent, name).artifacts())
+                if not post and action == 'download':
+                    archive = root.parent / (name + '.zip')
+                    if not archive.is_file():
+                        return self._json({'error': '技能包不存在，请重新生成'}, 404)
+                    return self._send(200, archive.read_bytes(), 'application/zip',
+                                      {'Content-Disposition': "attachment; filename*=UTF-8''" + quote(archive.name)})
+                if not post and action == 'scenarios':
+                    return self._json({'scenarios': _routes(root)})
+                if not post and action == 'memory':
+                    return self._json(storage.load(root / 'references/memory-ledger.json', {'memories': []}))
+                if action == 'evaluation':
+                    routes = _routes(root)
+                    if post:
+                        replies = payload.get('replies')
+                        if not isinstance(replies, dict):
+                            raise ValueError('请提交每个用例的待检查回复')
+                        return self._json(evaluation.save(root, replies, routes, str(payload.get('fingerprint') or '')))
+                    return self._json(evaluation.view(root, routes))
+                if action == 'feedback':
+                    if post:
+                        if payload.get('label') not in feedback.LABELS or not payload.get('user') or not payload.get('reply'):
+                            raise ValueError('请填写有效反馈类型、输入和回复')
+                        feedback.add(root, user_text=str(payload['user']), reply=str(payload['reply']),
+                                     label=payload['label'], note=str(payload.get('note') or ''),
+                                     version=str(payload.get('version') or ''), scenario_id=str(payload.get('scenario_id') or ''))
+                    return self._json(feedback.summary(root))
+                if not post and action == 'versions':
+                    return self._json({**versions.state(root), 'versions': versions.list_versions(root)})
+                if not post and action == 'diff':
+                    value = parse_qs(urlparse(self.path).query).get('version', [''])[0]
+                    return self._json(versions.diff(root, value))
+                if post and action == 'rollback':
+                    return self._json(versions.rollback(root, str(payload.get('version') or '')))
+                if post and action == 'snapshot':
+                    from .package import write_package
+                    files = versions.current_files(root)
+                    if 'SKILL.md' not in files or 'references/memory.md' not in files:
+                        raise ValueError('技能主文件不完整，不能保存')
+                    extra = {key: value for key, value in files.items()
+                             if key not in ('SKILL.md', 'references/memory.md')}
+                    current_info = versions.current(root)
+                    write_package(root.parent, name, files['SKILL.md'], files['references/memory.md'],
+                                  extra=extra, metadata=current_info.get('metadata', {}), reason='手动保存')
+                    return self._json(versions.state(root))
+                if action == 'privacy':
+                    if post:
+                        if payload.get('fingerprint') != versions.fingerprint(root):
+                            raise ValueError('内容已变化，请重新扫描后确认')
+                        privacy_review.confirm(root, str(payload.get('item') or ''), bool(payload.get('confirmed', True)))
+                    return self._json(privacy_review.with_confirmations(root, privacy_review.review(root)))
+                return self._json({'error': '没有这个接口'}, 404)
+        except (ValueError, OSError, KeyError, TypeError) as exc:
+            return self._json({'error': str(exc)}, 400)
+        except Exception as exc:
+            return self._json({'error': str(exc)}, 502)
 
     def _chat(self) -> None:
         """试聊：拿这次运行的产物当人设，直接问模型要一句话。
@@ -730,37 +855,11 @@ class _Handler(BaseHTTPRequestHandler):
         if not isinstance(messages, list) or not messages:
             return self._json({"error": "没有收到对话内容"}, 400)
 
-        base_url = str(payload.get("base_url") or "").strip() or \
-            _argv_value(target, "--base-url") or DEFAULT_BASE_URL
-        model = str(payload.get("model") or "").strip() or \
-            _argv_value(target, "--model") or DEFAULT_MODEL
-        # Key 不落盘、不写日志：只从这次运行的命令行里取（它本来就只活在这个进程里）
-        api_key = str(payload.get("api_key") or "").strip() or _argv_value(target, "--api-key")
-        if not api_key:
-            return self._json({"error": "没拿到 API Key：离线蒸馏的产物里没有，"
-                                        "磁盘上的 skill 也不带——在上面填一个再聊"})
         try:
-            system = _persona_prompt(target)
-        except OSError as exc:
-            return self._json({"error": f"读产物失败：{exc}"}, 500)
-
-        turns = _history_turns(messages)
-        if not turns:
-            return self._json({"error": "没有收到对话内容"}, 400)
-
-        started = time.monotonic()
-        temperature = _chat_temperature(payload)
-        try:
-            # 走 llm_chat（真正的多轮消息 + 聊天用的温度），不是抽取用的 llm_call：
-            # 后者把历史压成一条 user 消息，模型会照着"记录"的腔调往下写。
-            reply = llm_chat(base_url, api_key, model, system, turns, temperature=temperature)
+            result = _reply(target, payload, messages)
         except Exception as exc:
-            # llm_call 的报错（截断、超时、JSON 坏了）已经写得很具体，原样转给页面
             return self._json({"error": str(exc)})
-        # 示范里带了「我：」「对方：」这种说话人前缀，模型偶尔会照着抄回来，去掉
-        reply = re.sub(r"^\s*(?:TA|对方|你|我)\s*[:：]\s*", "", reply.strip())
-        reply = _unwrap_hard_breaks(reply)
-        return self._json({"reply": reply, "seconds": round(time.monotonic() - started, 1)})
+        return self._json(result)
 
     def _parse(self, parsed) -> None:
         raw_name = parse_qs(parsed.query).get("name", ["chat.txt"])[0]
@@ -868,7 +967,7 @@ def main(argv=None) -> int:
     print(f"kith-skill web 已启动：{url}")
     print(f"  输出目录：{OUT_ROOT}（打包好的 zip 会落在这里）")
     print(f"  临时目录：{SESSION_DIR}（只放上传的聊天记录，退出即删）")
-    print("  只监听本机；聊天记录与 API Key 都不会离开这台机器。Ctrl+C 结束。")
+    print("  默认只监听本机；启用 LLM、试聊或模型测评时，会向配置的接口发送内容。Ctrl+C 结束。")
     # 这一句要显式写出来：本进程是常驻的，Python 只在启动时加载模块，
     # 改完 src/ 再刷新页面也没用——用户会看到"命令行能用、工作台不行"，
     # 然后去怀疑代码或接口，而不是怀疑这个进程。

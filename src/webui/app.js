@@ -7,7 +7,7 @@ const state = { token: null, info: null, jobId: null, timer: null, findings: 0 }
 
 /* ───────────────────────── 工具 ───────────────────────── */
 
-const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 
 const humanSize = (n) =>
   n > 1024 * 1024 ? (n / 1024 / 1024).toFixed(1) + " MB"
@@ -17,7 +17,7 @@ const humanSize = (n) =>
 async function api(path, options) {
   const res = await fetch(path, options);
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || `请求失败（${res.status}）`);
+  if (!res.ok || data.error) throw new Error(data.error || `请求失败（${res.status}）`);
   return data;
 }
 
@@ -283,7 +283,7 @@ async function finish(snapshot) {
 
   /* 试聊页认的是产物目录名：job 只活在进程里（工作台重启就没了），
      所以链接都带上 skill=<技能名>，重启后照样能打开。 */
-  const skillName = encodeURIComponent($("f-name").value.trim() || "persona");
+  const skillName = encodeURIComponent(snapshot.name);
 
   if (result.has_zip) {
     $("artifact").hidden = false;
@@ -308,6 +308,7 @@ async function finish(snapshot) {
     ? `/play?job=${encodeURIComponent(state.jobId)}&skill=${skillName}&embed=1`
     : "/play?embed=1";
   if (result.skill) openPlayFrame(playUrl);
+  if (result.skill) await window.Review?.select(snapshot.name);
 }
 
 /* ───────────────────────── 标签与出错兜底 ───────────────────────── */
@@ -317,8 +318,16 @@ function switchTab(view) {
     t.classList.toggle("is-active", t.dataset.view === view));
   document.querySelectorAll(".view").forEach((v) =>
     v.classList.toggle("is-active", v.id === "view-" + view));
+  const tab = document.querySelector(`.tab[data-view="${view}"]`);
+  if (tab) {
+    const nav = $('tabs');
+    if (tab.offsetLeft < nav.scrollLeft) nav.scrollLeft = tab.offsetLeft;
+    else if (tab.offsetLeft + tab.offsetWidth > nav.scrollLeft + nav.clientWidth)
+      nav.scrollLeft = tab.offsetLeft + tab.offsetWidth - nav.clientWidth;
+  }
   // 试聊页等到点开才加载：还没跑过蒸馏也能用（它会列出 out/ 下的历史 skill）
   if (view === "play") openPlayFrame(playUrl);
+  window.Review?.open(view);
 }
 
 /* 试聊的地址：跑完一次蒸馏就指向这次运行；否则指向"去挑一份磁盘上的 skill" */
@@ -443,7 +452,7 @@ function renderVerify(text) {
     }).join(""));
   } else if (summary) {
     parts.push('<p class="verify__line" style="margin-top:22px">' +
-               '每条声称原话的内容都能在聊天记录里找到出处，没有被编造的条目。</p>');
+               '本次检查的引用与日期通过核验；是否正确理解语境、是否像本人，还需要对照接话片段和试聊判断。</p>');
   }
 
   box.innerHTML = parts.join("\n") || `<pre class="log">${esc(raw)}</pre>`;
@@ -499,6 +508,7 @@ function renderMarkdown(src) {
     }
     flush();
     if (!line.trim()) continue;
+    if (/^### /.test(line)) { out.push(`<h3>${inline(esc(line.slice(4)))}</h3>`); continue; }
     if (/^## /.test(line)) { out.push(`<h2>${inline(esc(line.slice(3)))}</h2>`); continue; }
     if (/^# /.test(line)) { out.push(`<h1>${inline(esc(line.slice(2)))}</h1>`); continue; }
     out.push(`<p>${inline(esc(line))}</p>`);

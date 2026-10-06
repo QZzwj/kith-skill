@@ -691,6 +691,14 @@ input:focus, select:focus {
     inset 0 0 0 1px rgba(22, 32, 63, .09),
     0 6px 20px rgba(22, 32, 63, .10);
 }
+
+/* Ten workbench views need a real scrollable strip; the active tab remains
+   readable on narrow screens without shrinking labels into unreadable text. */
+.tabs { display: flex; overflow-x: auto; justify-content: flex-start; gap: 3px; scrollbar-width: thin; }
+.tabs .tab { flex: 0 0 auto; min-width: 92px; }
+.tabs::before { display: none; }
+.tabs:has(.tab.is-active)::before { display: none; }
+.tab.is-active { background: #fff; box-shadow: 0 2px 6px rgba(22, 32, 63, .12); }
 /* 滑块。用 transform 而不是改 left：只走合成器，不触发重排（§11） */
 .tabs::before {
   content: ""; position: absolute; z-index: 0;
@@ -994,10 +1002,13 @@ input:focus, select:focus {
 }
 
 @media (max-width: 1180px) {
-  .layout { grid-template-columns: 1fr; }
+  .layout { grid-template-columns: minmax(0, 1fr); }
+  .layout > * { min-width: 0; }
   .rail { position: static; height: auto; max-height: none; overflow: visible; }
   .workspace { height: auto; min-height: 68vh; }
+  .views { position: relative; }
   .view.is-active { height: auto; max-height: none; overflow: visible; }
+  .views > .view--play.is-active { height: 72vh; min-height: 520px; }
   .placeholder { min-height: 40vh; }
 }
 
@@ -1008,8 +1019,31 @@ input:focus, select:focus {
   .status__cell { padding: 0 10px; }
   .field-row { grid-template-columns: 1fr; }
   .view.is-active { padding: calc(var(--tabs-h) + 10px) 16px 28px; }
-  /* 窄屏：图标 + 5 等分放不下，去图标缩字号。
-     等宽结构保留，所以滑块照常工作。 */
+  /* 窄屏：图标和长标签仍可横向滚动，当前项不会被压扁。 */
   .tab { font-size: 11.5px; gap: 0; padding: 8px 1px; letter-spacing: 0; }
   .tab .ico { display: none; }
 }
+
+.review { max-width: 960px; color: var(--ink); }
+.review h2 { margin-top: 0; font-family: var(--display); font-size: 22px; }
+.review h3 { margin: 0 0 8px; font-size: 15px; }
+.review-card { margin: 14px 0; padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--r-sm); background: rgba(255,255,255,.68); }
+.review-card blockquote { margin: 10px 0; padding-left: 12px; border-left: 2px solid var(--yellow); color: var(--ink-2); }
+.review-badge { display: inline-block; padding: 3px 8px; margin: 0 4px 5px 0; border-radius: 999px; background: var(--tint-blue); color: var(--blue); font-size: 11px; }
+.review-badge--warn { background: var(--danger-bg); color: var(--danger); }
+.review-muted { color: var(--ink-3); font-size: 12px; }
+.review-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+.review-button { border: 1px solid var(--line); border-radius: var(--r-sm); padding: 7px 12px; color: var(--blue); background: #fff; cursor: pointer; }
+.review-button:hover { border-color: var(--blue); }
+.review-button:disabled { opacity: .5; cursor: wait; }
+.review-config { display: grid; gap: 8px; padding-top: 10px; }
+.review-config label { display: grid; gap: 4px; font-size: 12px; }
+.review-config input, .review textarea { width: 100%; box-sizing: border-box; }
+.review textarea { min-height: 70px; resize: vertical; }
+.eval-result { color: var(--ink-3); font-size: 12px; }
+.review-diff { max-height: 420px; overflow: auto; padding: 10px; background: rgba(22,32,63,.05); white-space: pre-wrap; word-break: break-word; }
+.chat-feedback { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; font-size: 11px; color: var(--ink-3); }
+.chat-feedback select, .chat-feedback input { height: 28px; padding: 3px 8px; font-size: 11px; }
+.chat-feedback input { flex: 1 1 180px; min-width: 0; }
+.chat-feedback .btn { width: auto; padding: 6px 9px; font-size: 11px; }
+.chat-feedback [role="status"] { color: var(--blue); }

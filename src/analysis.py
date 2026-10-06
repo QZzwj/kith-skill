@@ -1,11 +1,10 @@
 import statistics
+from collections import Counter
 from datetime import timedelta
 
+from .conversations import SESSION_SEPARATOR, split_sessions
 from .models import CONFLICT_WORDS, SESSION_GAP, STOP_PHRASES, Msg, Stats
 from .parsers import SENTENCE_SPLIT, WEIBO_EMOJI
-
-#: 超过一周的空档不算"回复"（那是断联，不是慢）
-MAX_REPLY_GAP = timedelta(days=7)
 
 
 def reply_gaps(msgs: list[Msg]) -> dict[str, list[float]]:
@@ -19,7 +18,7 @@ def reply_gaps(msgs: list[Msg]) -> dict[str, list[float]]:
     for m in msgs:
         if prev and prev.ts and m.ts and m.speaker != prev.speaker:
             delta = (m.ts - prev.ts).total_seconds() / 60
-            if 0 <= delta <= MAX_REPLY_GAP.total_seconds() / 60:
+            if 0 <= delta <= SESSION_GAP.total_seconds() / 60:
                 gaps.setdefault(m.speaker, []).append(delta)
         prev = m
     return gaps
@@ -34,16 +33,19 @@ def analyse(msgs: list[Msg], target: str) -> Stats:
     for m in msgs:
         st.per_speaker[m.speaker] += 1
         if m.ts:
-            st.hours[m.ts.hour] += 1
-            if m.ts.hour >= 23 or m.ts.hour <= 5:
-                st.late_night += 1
             st.first_ts = min(st.first_ts, m.ts) if st.first_ts else m.ts
             st.last_ts = max(st.last_ts, m.ts) if st.last_ts else m.ts
         if m.speaker != target:
             prev = m
             continue
         mine += 1
-        if prev is not None and prev.speaker == target:
+        if m.ts:
+            st.timed_total += 1
+            st.hours[m.ts.hour] += 1
+            if m.ts.hour >= 23 or m.ts.hour <= 5:
+                st.late_night += 1
+        if (prev is not None and prev.speaker == target
+                and (not prev.ts or not m.ts or timedelta(0) <= m.ts - prev.ts <= SESSION_GAP)):
             bursts += 1                      # 连着发：一句话拆成好几条说
         lengths.append(len(m.text))
         emos = WEIBO_EMOJI.findall(m.text)
@@ -72,13 +74,9 @@ def analyse(msgs: list[Msg], target: str) -> Stats:
     gaps = reply_gaps(msgs).get(target, [])
     st.reply_gap = round(statistics.median(gaps), 1) if gaps else 0.0
 
-    # 会话切分：>30 分钟算新会话，统计谁先开口（主动找人）
-    prev = None
-    for m in msgs:
-        if m.ts and (prev is None or m.ts - prev > SESSION_GAP):
-            st.session_starts[m.speaker] += 1
-        if m.ts:
-            prev = m.ts
+    for session in split_sessions(msgs):
+        if any(m.ts for m in session):
+            st.session_starts[session[0].speaker] += 1
     return st
 
 
@@ -102,7 +100,7 @@ def stats_markdown(st: Stats, target: str) -> str:
         span = f"{st.first_ts:%Y-%m-%d} ~ {st.last_ts:%Y-%m-%d}（约 {days} 天）"
     top_phrases = [p for p, c in st.phrases.most_common(18) if c >= 3]
     top_emoji = [f"{e}×{c}" for e, c in st.emoji.most_common(12)]
-    late_ratio = f"{st.late_night / st.total * 100:.0f}%" if st.total else "0%"
+    late_ratio = f"{st.late_night / st.timed_total * 100:.0f}%" if st.timed_total else "未知"
     lines = [
         "## 数据统计（脚本自动提取，未经过 LLM，可当作风味的客观线索）",
         "",
@@ -131,49 +129,73 @@ def stats_markdown(st: Stats, target: str) -> str:
 # 三、采样：按会话切分，优先深夜 / 冲突 / 长会话
 # ----------------------------------------------------------------------------
 
-def sample_sessions(msgs: list[Msg], target: str, budget_chars: int) -> tuple[str, int]:
-    sessions: list[list[Msg]] = []
-    cur: list[Msg] = []
-    prev = None
-    for m in msgs:
-        if m.ts and prev and m.ts - prev > SESSION_GAP:
-            if cur:
-                sessions.append(cur)
-            cur = []
-        cur.append(m)
-        if m.ts:
-            prev = m.ts
-    if cur:
-        sessions.append(cur)
-
-    def priority(sess: list[Msg]) -> float:
-        score = 0.0
-        text = " ".join(m.text for m in sess)
-        hit_target = sum(1 for m in sess if m.speaker == target)
-        if not hit_target:
-            return -1
-        score += min(len(sess), 60) * 0.3            # 有来有回的长会话更有信息量
-        score += hit_target * 0.2
-        if any(m.ts and (m.ts.hour >= 23 or m.ts.hour <= 5) for m in sess):
-            score += 25                               # 深夜对话最能体现真实性格
-        score += sum(6 for w in CONFLICT_WORDS if w in text)   # 争吵/矛盾
-        return score
-
-    ranked = sorted(sessions, key=priority, reverse=True)
-    chunks: list[str] = []
-    used = 0
-    for sess in ranked:
-        if priority(sess) < 0:
+def sample_sessions(msgs: list[Msg], target: str, budget_chars: int,
+                    window_chars: int | None = None) -> tuple[str, int]:
+    """按月份和情境覆盖选完整会话，保持年份、顺序和严格字符预算。"""
+    if budget_chars <= 0:
+        return "", 0
+    window_budget = min(budget_chars, window_chars) if window_chars is not None else budget_chars
+    if window_budget <= 60:
+        return "", 0
+    candidates = []
+    for index, session in enumerate(split_sessions(msgs)):
+        if not any(m.speaker == target for m in session):
             continue
-        body = "\n".join(
-            f"[{m.ts:%m-%d %H:%M}] {m.speaker}: {m.text}" if m.ts else f"{m.speaker}: {m.text}"
-            for m in sess
-        )
-        if used + len(body) > budget_chars and chunks:
-            break
-        chunks.append(body)
-        used += len(body)
-    return "\n\n---\n\n".join(chunks), used
+        lines = [f"[{m.ts:%Y-%m-%d %H:%M}] {m.speaker}: {m.text}" if m.ts
+                 else f"[时间未知] {m.speaker}: {m.text}" for m in session]
+        # 超长会话按相邻的完整发言段切窗口；不截断消息，也不把窗口接成连续对话。
+        runs: list[list[str]] = []
+        previous_speaker = None
+        for msg, line in zip(session, lines):
+            if runs and msg.speaker == previous_speaker:
+                runs[-1].append(line)
+            else:
+                runs.append([line])
+            previous_speaker = msg.speaker
+        windows: list[str] = []
+        current: list[str] = []
+        for run in runs:
+            body = "\n".join(run)
+            if len(body) + 60 > window_budget:
+                if current:
+                    windows.append("\n".join(current))
+                current = []
+                continue
+            if len("\n".join(current + run)) + 60 > window_budget and current:
+                windows.append("\n".join(current))
+                current = []
+            current.extend(run)
+        if current:
+            windows.append("\n".join(current))
+        month = next((f"{m.ts:%Y-%m}" for m in session if m.ts), "未知")
+        for window_id, body in enumerate(windows):
+            if not any(f"] {target}:" in line for line in body.splitlines()):
+                continue
+            conflict = sum(word in body for word in ("生气", "别催", "别跟我", "吵架", "冷战", "对不起"))
+            scene = ("摩擦" if conflict else "商量" if any(w in body for w in ("要不要", "一起", "说定", "周末"))
+                     else "日常")
+            marked = f"【会话 {index + 1} / 窗口 {window_id + 1}；与其他会话独立】\n{body}"
+            candidates.append((index, window_id, month, scene, marked))
+    chosen = []
+    months, scenes, sessions = Counter(), Counter(), Counter()
+    used = 0
+    while candidates:
+        def score(item):
+            index, window, month, scene, body = item
+            return (min(body.count("\n"), 40) / 40 - 3 * months[month]
+                    - 3 * scenes[scene] - 4 * sessions[index])
+        item = max(candidates, key=score)
+        candidates.remove(item)
+        cost = len(item[4]) + (len(SESSION_SEPARATOR) if chosen else 0)
+        if used + cost > budget_chars:
+            continue       # 大会话装不下时仍可选后面更短的会话
+        chosen.append(item)
+        used += cost
+        months[item[2]] += 1
+        scenes[item[3]] += 1
+        sessions[item[0]] += 1
+    sample = SESSION_SEPARATOR.join(item[4] for item in sorted(chosen))
+    return sample, len(sample)
 
 
 # ----------------------------------------------------------------------------

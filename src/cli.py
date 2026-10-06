@@ -1,16 +1,20 @@
 import argparse
 import os
+import re
 import sys
 from collections import Counter
 from pathlib import Path
 
-from . import cite, corpus, offline, relation, verify
+from . import (cite, corpus, offline, quality, relation, verify, scenarios,
+               memory_ledger, evaluation, feedback, privacy_review, storage, versions)
 from .analysis import analyse, sample_sessions
 from .llm import consult_llm
 from .package import upload_to_device, write_package
 from .parsers import load_messages
 from .privacy import flag_deixis, redact
-from .render import PROFILE_FILE, render_memory_md, render_profile_md, render_skill_md
+from .models import Msg
+from .render import (PROFILE_FILE, render_memory_md, render_observations_md,
+                     render_profile_md, render_skill_md)
 
 
 def build_args(argv=None):
@@ -23,7 +27,7 @@ def build_args(argv=None):
     p.add_argument("--input", required=True,
                    help="聊天记录文件或目录（txt/csv/json/html/mht/mhtml/mbox/js/db）")
     p.add_argument("--name", required=True, help="技能目录名（字母数字下划线短横线点）")
-    p.add_argument("--display", help="显示名（默认与 --name 相同）")
+    p.add_argument("--display", help="显示名（默认用实际蒸馏对象的名字）")
     p.add_argument("--me", default="我",
                    help="你自己在记录里的昵称（逗号分隔可多个，默认「我」）。"
                         "微信工具导出时本人一侧通常标成「我」，保持默认即可")
@@ -32,9 +36,9 @@ def build_args(argv=None):
     p.add_argument("--desc", default="", help="主观描述：性格/MBTI/星座/标签，例如『ENFP，双子座，话痨』")
     p.add_argument("--out", default=str(Path(__file__).resolve().parent.parent / "dist"),
                    help="输出目录（默认 <工具目录>/dist，建议显式指定；不要依赖系统盘根目录等绝对路径）")
-    p.add_argument("--llm-chars", type=int, default=30000, help="送给 LLM 的语料字符预算（默认 30000）")
+    p.add_argument("--llm-chars", type=int, default=30000, help="每批送给 LLM 的语料字符预算（默认 30000）")
     p.add_argument("--corpus-mb", type=float, default=corpus.DEFAULT_BUDGET_MB,
-                   help="参考资料层的体积预算，单位 MB（默认 8，0 = 不生成）。带上它，"
+                   help="原记录参考层的体积预算，单位 MB（默认 8，0 = 不附原记录；仍保留统计和原话出处）。带上它，"
                         "skill 里会多出逐月原记录 references/transcript/ 与结论依据 "
                         "references/evidence.md，设备侧才能检索到原话")
     p.add_argument("--no-source", action="store_true",
@@ -92,6 +96,9 @@ def main(argv=None) -> int:
             pass
 
     args = build_args(argv)
+    if not re.fullmatch(r'[\w.\-]+', args.name) or args.name.lower() in ('.', '..', '.kith'):
+        print('技能名只允许字母、数字、下划线、点和短横线', file=sys.stderr)
+        return 2
     src = Path(args.input)
     if not src.exists():
         print(f"找不到输入：{src}", file=sys.stderr)
@@ -140,6 +147,12 @@ def main(argv=None) -> int:
     # 主技能扮演谁：本人使用＝对方（你和 TA 聊）；公开使用＝你（别人跟你的分身聊）
     main_name = me_name if (both and audience == "公开") else target
     back_name = target if main_name == me_name else me_name
+    skill_root = Path(args.out) / args.name
+    previous = versions.current(skill_root).get('metadata', {})
+    feedback_rows = feedback.read(skill_root) if previous.get('audience', audience) == audience else []
+    args.feedback_context = feedback.context(feedback_rows)
+    if feedback_rows:
+        print(f'      已载入 {len(feedback_rows)} 条试聊反馈：用于修正接法和回归测评，不作为聊天事实')
     if both:
         print(f"      双向蒸馏：{target} ↔ {me_name}")
         print(f"      技能用途：{audience} —— 主技能扮演 {main_name}，"
@@ -156,7 +169,7 @@ def main(argv=None) -> int:
     stats_target = analyse(msgs, target)
     print(f"      {target} 口头禅候选："
           f"{'、'.join(p for p, _ in stats_target.phrases.most_common(8)) or '（不足）'}")
-    print(f"      深夜消息占比：{stats_target.late_night / max(1, stats_target.total) * 100:.0f}%")
+    print(f"      深夜消息占比：{stats_target.late_night / max(1, stats_target.timed_total) * 100:.0f}%")
     stats_me = None
     if both:
         stats_me = analyse(msgs, me_name)
@@ -180,10 +193,11 @@ def main(argv=None) -> int:
     # 注意：别叫 corpus —— 那个名字是本模块要用的「参考资料层」（src/corpus.py）
     sample = ""
     if use_llm:
-        sample, used = sample_sessions(msgs, target, args.llm_chars)
+        sample, used = sample_sessions(msgs, main_name, args.llm_chars * max(1, args.llm_batches),
+                                      window_chars=args.llm_chars)
         if not args.no_redact:
             sample = redact(sample)
-        print(f"      选中 {used} 字符（深夜 / 争吵 / 长会话优先）")
+        print(f"      选中 {used} 字符（覆盖不同月份、日常与摩擦，保留会话顺序）")
     else:
         print("      跳过：本地抽取模式直接读全部记录，不采样、不联网"
               "（脱敏照做，见第 6 步）")
@@ -245,28 +259,45 @@ def main(argv=None) -> int:
                   f"典型例句 {len(back_persona.get('典型例句', []))} 条")
 
     print("[5/6] 校验结论")
+    # 模型看到的是脱敏片段；引用核验也使用相同文本，避免将标签误判为编造。
+    evidence_msgs = ([Msg(m.ts, m.speaker, redact(m.text)) for m in msgs]
+                     if not args.no_redact else msgs)
+    if not args.no_redact:
+        persona = {key: [redact(str(item)) for item in value] for key, value in persona.items()}
+        memory = {key: [redact(str(item)) for item in value] for key, value in memory.items()}
+        back_persona = {key: [redact(str(item)) for item in value] for key, value in back_persona.items()}
+    persona, quality_notes = quality.prepare_persona(persona, evidence_msgs, main_name, stats_main,
+                                                     redact(args.desc) if not args.no_redact else args.desc,
+                                                     relation_name)
+    if use_llm and any(note.startswith("从完整会话补入") for note in quality_notes):
+        fell_back = True
+    for note in quality_notes:
+        print(f"      内容检查：{note}")
+    if back_persona:
+        back_persona, _ = quality.prepare_persona(back_persona, evidence_msgs, back_name, stats_back,
+                                                  args.desc, relation_name)
     if args.no_verify:
         print("      跳过（--no-verify）")
     elif not persona and not memory:
         print("      跳过：没有产出可校验的内容")
     else:
-        findings = verify.inspect(persona, memory, msgs)
+        findings = verify.inspect(persona, memory, evidence_msgs)
         persona, memory = verify.apply(persona, memory, findings, strict=args.strict)
         print(verify.format_report(findings))
         if back_persona:
             # 背景资料也要过一遍：它同样是拿原话写的，编了照样要标出来
-            back_findings = verify.inspect(back_persona, {}, msgs)
+            back_findings = verify.inspect(back_persona, {}, evidence_msgs)
             back_persona, _ = verify.apply(back_persona, {}, back_findings,
                                            strict=args.strict)
             print(f"      {back_name} 的画像：")
             print(verify.format_report(back_findings))
 
-    display = args.display or args.name
+    display = args.display or main_name
     desc = args.desc
     if not desc and (fell_back or not use_llm):
         # 如实交代这份人设是哪来的：LLM 版本和统计版本的腔调差得远，
         # 用户看到满屏统计口径时才知道不是模型跑歪了。
-        desc = ("LLM 蒸馏 + 本地抽取式蒸馏补齐（部分环节失败）："
+        desc = ("LLM 蒸馏 + 本地抽取式蒸馏补齐："
                 "结论都来自聊天记录，并附依据" if use_llm else
                 "本地抽取式蒸馏（未调用 LLM）：每条结论都来自统计或聊天原话，并附有依据")
 
@@ -286,7 +317,11 @@ def main(argv=None) -> int:
     # 只有"公开版"的措辞层另有指代标注（见上）。
     scrub = redact if not args.no_redact else None
     # 引用体系：给每条结论配"时间 + 说话人 + 原话"的出处，文末汇总成参考文献表
-    cites = cite.Citations(msgs, redact=scrub)
+    cites = cite.Citations(evidence_msgs, redact=scrub)
+    routes = scenarios.build_scenarios(evidence_msgs, main_name, back_name)
+    ledger = memory_ledger.build(memory, evidence_msgs, cites)
+    cases = evaluation.build_cases(routes)
+    correction_md = feedback.render_rules(feedback_rows, routes)
     # 参考资料层：人设文档是提炼过的结论，"记得住事"靠的是能检索到的原话
     refs = corpus.build(msgs, target=main_name, persona=persona, memory=memory,
                         budget_mb=args.corpus_mb, redact=scrub, source=src,
@@ -320,9 +355,10 @@ def main(argv=None) -> int:
                                audience=audience,
                                counterpart=back_name if both else "",
                                counterpart_profile=back_persona if both else None,
-                               extra_refs=refs_bullets, cites=cites)
+                               extra_refs=refs_bullets, cites=cites,
+                               scenarios_md=scenarios.render_markdown(routes) + '\n' + correction_md)
     memory_md = render_memory_md(display, memory, stats_main, main_name, relation_name,
-                                 cites=cites)
+                                 cites=cites, ledger=ledger)
     profile_md = ""
     if both:
         role_note = (f"这是你自己（{back_name}）的画像。主技能扮演的是 {display}，"
@@ -336,7 +372,6 @@ def main(argv=None) -> int:
     # 参考文献表：三份文档各带一份完整的（设备侧是按文件读的，别的文件里的编号它找不到）
     reference_table = cites.table()
     if reference_table:
-        skill_md += reference_table
         memory_md += reference_table
         if profile_md:
             profile_md += reference_table
@@ -354,10 +389,21 @@ def main(argv=None) -> int:
         print(f"      公开版：{public_marks} 条指代只有本人对得上，已在文中标注，请逐条确认")
 
     extra: dict[str, str] = dict(refs)
+    observations = render_observations_md(display, persona, stats_main, main_name)
+    extra['references/profile.md'] = scrub(observations) if scrub else observations
+    extra['references/quotes.md'] = reference_table.lstrip() or '# 原话出处\n\n本次没有可编号的引用。\n'
+    extra['references/scenarios.json'] = storage.dumps(scenarios.package_data(routes))
+    extra['references/memory-ledger.json'] = storage.dumps(memory_ledger.package_data(ledger))
+    extra['references/evaluation.json'] = storage.dumps({'schema_version': 1, 'cases': cases})
     if both:
         extra[PROFILE_FILE[audience]] = profile_md
     zip_path = write_package(Path(args.out), args.name, skill_md, memory_md,
-                             extra=extra or None)
+                             extra=extra or None, metadata={'audience': audience,
+                                 'engine': 'llm' if use_llm else 'offline',
+                                 'relation': relation_name, 'redacted': bool(scrub)})
+    privacy = privacy_review.review(skill_root)
+    print(f'      情境路由 {len(routes)} 类 · 带状态记忆 {len(ledger)} 条 · 回归用例 {len(cases)} 条')
+    print(f"      发布前隐私检查：{len(privacy['items'])} 条待确认；在 Web 工作台可逐条查看")
     packed = zip_path.stat().st_size
     print(f"      {zip_path}（{packed / 1024 / 1024:.1f} MB，压缩后）" if packed >= 1024 * 1024
           else f"      {zip_path}（{packed / 1024:.1f} KB）")

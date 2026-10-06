@@ -1,9 +1,8 @@
 """离线抽取式蒸馏：不调用任何 LLM，把聊天记录直接变成可用的人设与关系记忆。
 
-和 ``llm.consult_llm()`` 的根本区别是**这里不生成任何新句子**：
-- 说话风格、情感模式、关系行为、温度与分寸来自文体计量学（stylometry）统计；
-- 口头禅、典型例句、接话方式、称呼、地点、梗来自原文抽取；
-- 每条结论后面都附统计依据，便于人工核对真假。
+不调用模型：文体规则来自统计，接话示范从同一会话的相邻发言中摘录，
+情境接法用有限规则描述可观察的回应动作。单次观察不外推成固定性格。
+统计画像单独留作参考，口头禅、典型例句、称呼、地点和梗来自原文抽取。
 
 因此它输出的东西比 LLM 更保守，但每一条都能在记录里找到出处。
 jieba 是可选增强（装了分词更准），不装也能完整跑通。
@@ -18,6 +17,7 @@ from collections.abc import Sequence
 from datetime import datetime, timedelta
 
 from .analysis import reply_gaps
+from .conversations import reply_exchanges, select_exchanges, situation_items, split_sessions
 from .models import CONFLICT_WORDS, SESSION_GAP, STOP_PHRASES, Msg, Stats
 
 try:  # 可选增强：装了就用，没装不影响任何功能
@@ -38,7 +38,7 @@ __all__ = ["distill", "engine"]
 
 def engine() -> str:
     """当前使用的分词引擎，用于在 CLI 里如实告知用户。"""
-    return "jieba" if _HAS_JIEBA else "内置 n-gram"
+    return "jieba" if _HAS_JIEBA else "内置短句抽取"
 
 
 # ----------------------------------------------------------------------------
@@ -98,6 +98,14 @@ PLACE_RE = re.compile(
     r"(?:省|市|区|县|镇|村|街道|路|街|巷|站|机场|火车站|地铁|公园|广场|学校|大学|"
     r"医院|餐厅|饭店|酒店|超市|商场|电影院|图书馆|楼下|门口)"
 )
+
+#: 已知的地名后缀词集，用于 PLACE_VERB_RE 的后验校验：
+#: 动词后捕获的片段必须以这些字结尾才认，否则"去那个比赛"→"个比赛"、"不去可惜了"→"可惜"
+#: 会被当成地名。只有同时包含后缀或落在白名单里才算数。
+PLACE_SUFFIXES = set("省市区县镇村街路巷站楼场园校院馆店厦房寓寓寓寓寓寓")
+#: 动词后捕获时也接受的"口语地名"——不以标准后缀结尾但确为地点。
+#: 必须精确匹配且自带语境（宿舍/食堂/教室/操场/后山/图书馆/食堂二楼）。
+PLACE_ORAL = {"宿舍", "食堂", "教室", "操场", "后山", "图书馆", "食堂二楼", "山脚", "宿舍楼"}
 
 #: 地名开头的动词/连词（"去滨江天街"→"滨江天街"）
 PLACE_LEAD_TRIM = set("等下去了到在逛还就也又都再这那我你他她的是很太")
@@ -324,21 +332,7 @@ def _counterpart(stats: Stats, target: str) -> str | None:
 
 
 def _sessions(msgs: list[Msg], gap: timedelta = SESSION_GAP) -> list[list[Msg]]:
-    """按时间间隔切分会话（和 sample_sessions 同一套规则）。"""
-    sessions: list[list[Msg]] = []
-    cur: list[Msg] = []
-    prev: datetime | None = None
-    for m in msgs:
-        if m.ts and prev and m.ts - prev > gap:
-            if cur:
-                sessions.append(cur)
-            cur = []
-        cur.append(m)
-        if m.ts:
-            prev = m.ts
-    if cur:
-        sessions.append(cur)
-    return sessions
+    return split_sessions(msgs, gap)
 
 
 # ----------------------------------------------------------------------------
@@ -427,6 +421,16 @@ def _mine_edges(texts: list[str], where: str, n: int = 3, min_count: int = 3,
     return [(g, c) for g, c in counts.most_common(limit) if c >= min_count]
 
 
+def _is_expressive(token: str) -> bool:
+    """筛掉明显话题词；没有分词器时只保留含语气、动作或评价线索的表达。"""
+    if _is_noise(token) or _looks_like_topic(token):
+        return False
+    if pseg is not None:
+        return True
+    return bool(re.search(r"我|你|别|不|好|真|太|就|还|下次|一定|行|算|牛|擦|"
+                          r"[啊吧呢哦呀嘛嘿唉嗯哈啦]|笑|谢|靠|艹|卧槽", token))
+
+
 def _phrase_items(target_lines: list[str], other_lines: list[str] | None = None,
                   limit: int = 12, exclude: set[str] | None = None) -> list[str]:
     """挑口癖。
@@ -437,9 +441,11 @@ def _phrase_items(target_lines: list[str], other_lines: list[str] | None = None,
     if pseg is not None:
         words, ngrams = _mine_jieba(target_lines)   # 按词边界组合，不切出跨词碎片
     else:
-        words, ngrams = [], _mine_ngrams(target_lines)
-    heads = _mine_edges(target_lines, "head")
-    tails = _mine_edges(target_lines, "tail")
+        # 没有分词器时只使用重复的完整短句/分句；任意字串容易把话题词和半个词当口癖。
+        chunks = [part.strip() for line in target_lines
+                  for part in re.split(r"[\s，,。.!！?？;；]+", line)]
+        words, ngrams = [], Counter(part for part in chunks
+                                   if 2 <= len(part) <= 12 and not _is_noise(part)).most_common(80)
     banned = exclude or set()
 
     def count_in(token: str, lines: list[str]) -> int:
@@ -450,6 +456,9 @@ def _phrase_items(target_lines: list[str], other_lines: list[str] | None = None,
     baseline = other_lines or []
     baseline_chars = sum(len(line) for line in baseline)
     use_baseline = baseline_chars >= 200  # 对方样本太少时比值不可信
+    # 短记录（<500 字）放宽最低频次：3 次」在 123 条消息里恰好是核心口癖，
+    # 但 n-gram 的 min_count=3 会让只出现 2 次但极具特征的短句被直接砍掉
+    min_freq = 2 if target_chars < 500 else 3
 
     def distinct(token: str, target_count: int) -> float:
         if not use_baseline:
@@ -468,10 +477,10 @@ def _phrase_items(target_lines: list[str], other_lines: list[str] | None = None,
         if any(token == b or (len(b) >= 2 and (token in b or b in token)) for b in banned):
             continue
         # 词性上属于话题词的（电源、实验室、那我）也丢掉
-        if _looks_like_topic(token):
+        if not _is_expressive(token):
             continue
         target_count = count_in(token, target_lines)
-        if target_count < 3:
+        if target_count < min_freq:
             continue
         candidates.append((token, target_count, distinct(token, target_count)))
 
@@ -490,10 +499,6 @@ def _phrase_items(target_lines: list[str], other_lines: list[str] | None = None,
     # 频次与独特性都要：出现得多、并且主要是这个人在用
     picked.sort(key=lambda c: -(c[1] ** 0.5 * c[2] * len(c[0]) ** 0.5))
     items = [f"「{t}」（出现 {c} 次）" for t, c, _ in picked[:limit]]
-    if heads:
-        items.append("句首习惯：" + "、".join(f"「{g}」×{c}" for g, c in heads[:5]))
-    if tails:
-        items.append("句尾习惯：" + "、".join(f"「{g}」×{c}" for g, c in tails[:5]))
     return items
 
 
@@ -572,8 +577,8 @@ def _style_items(msgs: list[Msg], target: str, stats: Stats) -> list[str]:
         items.append(f"连发习惯：有 {bursts} 次是在自己上一条之后紧接着再发（喜欢拆成几句说）")
 
     # 深夜活跃（复用 stats）
-    if stats.total:
-        items.append(f"作息：{stats.late_night / stats.total * 100:.0f}% 的消息出现在 23:00–05:00")
+    if stats.timed_total:
+        items.append(f"作息：{stats.late_night / stats.timed_total * 100:.0f}% 的消息出现在 23:00–05:00")
     return items
 
 
@@ -766,12 +771,12 @@ def _relation_items(msgs: list[Msg], target: str, stats: Stats) -> list[str]:
 
 def _example_items(msgs: list[Msg], target: str, phrases: list[str], limit: int = 8) -> list[str]:
     keywords = [p.split("」")[0].lstrip("「") for p in phrases if p.startswith("「")]
-    scored: list[tuple[float, str]] = []
+    scored: list[tuple[float, str, Msg]] = []
     for m in msgs:
         if m.speaker != target:
             continue
         text = _clean(m.text)
-        if not (6 <= len(text) <= 60):
+        if not (3 <= len(text) <= 60):
             continue
         if _is_noise(text) or text.startswith("["):
             continue
@@ -781,12 +786,16 @@ def _example_items(msgs: list[Msg], target: str, phrases: list[str], limit: int 
         score += 1.5 * len(_NEG_RE.findall(text))
         score += 1.0 * len(_CARE_RE.findall(text))
         score += 0.8 * len(EMOJI_RE.findall(text))
+        # 没有命中任何关键词的短句也给一个小分：它们是"日常原话"，
+        # 总比整节只有高频词造句来得真实
+        if score == 0:
+            score = 0.5
         score += min(len(text), 40) * 0.04
-        scored.append((score, text))
+        scored.append((score, text, m))
 
     scored.sort(key=lambda x: -x[0])
     out: list[str] = []
-    for _, text in scored:
+    for _, text, _ in scored:
         # 太像的只留一条：既排除互为子串的，也排除同一个开场白的
         if any(text in other or other in text or text[:3] == other[:3] for other in out):
             continue
@@ -820,16 +829,37 @@ def _timeline_items(msgs: list[Msg]) -> list[str]:
     return items
 
 
+def _is_real_place(candidate: str) -> bool:
+    """动词后捕获的片段是不是真地名。
+
+    PLACE_VERB_RE 太宽：\"去那个比赛\"会捕到\"个比赛\"，\"不去可惜了\"会捕到\"可惜\"。
+    只保留结尾是标准地名后缀、或落在口语地名白名单里的候选。
+    """
+    if not candidate or len(candidate) < 2:
+        return False
+    if candidate in PLACE_BLOCKLIST or candidate in GENERIC_NGRAMS:
+        return False
+    if candidate in PLACE_ORAL:
+        return True
+    # 以标准地名后缀结尾（路/街/站/楼/场/园/校/馆/店…）
+    return candidate[-1] in PLACE_SUFFIXES
+
+
 def _find_places(msgs: list[Msg]) -> tuple[Counter[str], dict[str, str]]:
-    """两条线索结合：地名词尾（"西湖区"）+ 动词后置（"去城西银泰"）。"""
+    """两条线索结合：地名词尾（"西湖区"）+ 动词后置（"去城西银泰"）。
+
+    动词线索必须经过 _is_real_place 后验，否则会混进大量非地名片段。
+    """
     hits: Counter[str] = Counter()
     sample: dict[str, str] = {}
     for m in msgs:
         text = m.text or ""
+        # PLACE_RE 自带后缀，匹配到的大概率是真地名，只需去 blocklist
         found = [p for p in (_trim_place(raw) for raw in PLACE_RE.findall(text))
                  if len(p) >= 2 and p not in PLACE_BLOCKLIST]
+        # PLACE_VERB_RE 太宽，必须后验校验
         found += [p for p in (_trim_place(raw) for raw in PLACE_VERB_RE.findall(text))
-                  if len(p) >= 2 and p not in PLACE_BLOCKLIST and p not in GENERIC_NGRAMS]
+                  if _is_real_place(p)]
         for place in found:
             hits[place] += 1
             sample.setdefault(place, _clean(text))
@@ -845,7 +875,14 @@ def _place_items(msgs: list[Msg], limit: int = 8) -> list[str]:
     return [f"{p}（提到 {c} 次）——「{sample[p][:36]}」" for p, c in chosen]
 
 
-def _call_items(msgs: list[Msg], limit: int = 8) -> list[str]:
+def _call_items(msgs: list[Msg], limit: int = 8,
+                phrase_items: list[str] | None = None) -> list[str]:
+    """称呼与专属用语：昵称 + @ + 口头禅回退。
+
+    很多非恋爱记录里没有\"宝贝\"\"老婆\"，但\"我擦\"\"牛嘿\"\"稳了\"是双方都懂的
+    专属用语——比昵称更能体现关系的\"加密\"。口头禅列表由 distill 传入，
+    只挑双方都在用的（或 target 独有的高频词）。
+    """
     hits: Counter[str] = Counter()
     for m in msgs:
         for pat in CALL_PATTERNS:
@@ -857,29 +894,58 @@ def _call_items(msgs: list[Msg], limit: int = 8) -> list[str]:
             if c:
                 hits[pet] += c
     out = [f"「{name}」×{count}" for name, count in hits.most_common(limit) if count >= 2]
+    # 回退：昵称没命中时，从口头禅里挑专属用语
+    if not out and phrase_items:
+        for item in phrase_items[:limit]:
+            # phrase_items 格式「下次一定」（出现 3 次）
+            if item.startswith("「"):
+                out.append(item.split("」")[0] + "」" + "（专属用语）")
     return out
 
 
 def _joke_items(msgs: list[Msg], target: str, counterpart: str | None,
                 limit: int = 6) -> list[str]:
-    """inside joke 的近似：两边都在用、且频次够高的短语。"""
+    """inside joke 的近似：两边都在用、且频次够高的短语。
+
+    只要求双方各用 2 次就计入（之前是 3 次，demo 数据量下会把「下次一定」「行吧」
+    这种核心梗全丢掉）。另外补一条\"一方高频用、另一方至少提过一次\"的线索——
+    很多梗是一方造的、另一方只是回应，但它们同样是 inside joke。
+    """
     if not counterpart:
         return []
-    mine = Counter(dict(_mine_ngrams(_lines(msgs, target), min_count=3, limit=200)))
-    theirs = Counter(dict(_mine_ngrams(_lines(msgs, counterpart), min_count=3, limit=200)))
-    shared = [(g, min(mine[g], theirs[g])) for g in mine.keys() & theirs.keys()]
-    # 频次相同时按长度和字形排，避免集合迭代顺序让输出抖动
-    shared.sort(key=lambda x: (-x[1], -len(x[0]), x[0]))
-    return [f"「{g}」（双方各用约 {c} 次，是你们之间的固定说法）" for g, c in shared[:limit]]
+    # 双方共享的短语（各 ≥2 次）
+    mine = Counter(dict(_mine_ngrams(_lines(msgs, target), min_count=2, limit=200)))
+    theirs = Counter(dict(_mine_ngrams(_lines(msgs, counterpart), min_count=2, limit=200)))
+    shared = [(g, min(mine[g], theirs[g]))
+              for g in mine.keys() & theirs.keys()]
+    # 补充：一方高频（≥3）、另一方至少用过 1 次的短语
+    mine_all = Counter(dict(_mine_ngrams(_lines(msgs, target), min_count=3, limit=200)))
+    theirs_all = Counter(dict(_mine_ngrams(_lines(msgs, counterpart), min_count=1, limit=200)))
+    mine_only = [(g, mine_all[g]) for g in mine_all
+                 if theirs_all.get(g, 0) >= 1 and g not in dict(shared)]
+    # 合并去重，标注来源
+    combined: dict[str, tuple[int, str]] = {}
+    for g, c in shared:
+        combined[g] = (c, f"双方各用约 {c} 次")
+    for g, c in mine_only:
+        combined[g] = (c, f"{target} 用 {c} 次，对方也提过")
+    ranked = sorted(combined.items(), key=lambda kv: (-kv[1][0], -len(kv[0]), kv[0]))
+    return [f"「{g}」（{desc}，是你们之间的固定说法）"
+            for g, (_, desc) in ranked[:limit]]
 
 
 def _quarrel_items(msgs: list[Msg], limit: int = 4) -> list[str]:
-    """找冲突密度最高的会话，给出起因原话和收场信号。"""
+    """找冲突密度最高的会话，给出起因原话和收场信号。
+
+    阈值从 hits>=2 降到 hits>=1：很多闹别扭只命中一个带刺词（\"别催\"\"行吧\"），
+    但整段对话明显在抬杠，把它漏掉就丢了关系记忆里很重要的一块。
+    len(sess)>=3 也比原来松一点——短对话也能吵起来。
+    """
     scored = []
     for sess in _sessions(msgs):
         text = "\n".join(m.text for m in sess)
         hits = sum(1 for w in CONFLICT_WORDS if w in text)
-        if hits >= 2 and len(sess) >= 4:
+        if hits >= 1 and len(sess) >= 3:
             scored.append((hits * len(sess) ** 0.3, sess, hits))
     scored.sort(key=lambda x: -x[0])
 
@@ -892,22 +958,45 @@ def _quarrel_items(msgs: list[Msg], limit: int = 4) -> list[str]:
         when = f"{first.ts:%Y-%m-%d}" if first.ts else "某次"
         lead = [m for m in conflict if m is not first][:2] or conflict[:2]
         detail = "；".join(f"{m.speaker}：「{_clean(m.text)[:24]}」" for m in lead)
+        # 收场信号也扩充：日常和好的标志（嗯嗯/行/没事/算了）也算
         tail = next((m for m in reversed(sess)
-                     if any(w in m.text for w in ("对不起", "抱歉", "别生气", "好啦", "抱抱", "亲亲"))), None)
-        line = f"{when} 前后有过一次冲突（命中 {hits} 类冲突词）：{detail}"
+                     if any(w in m.text for w in ("对不起", "抱歉", "别生气", "好啦",
+                                                   "抱抱", "亲亲", "嗯嗯", "没事",
+                                                   "算了", "行", "好了"))), None)
+        severity = "冲突" if hits >= 2 else "闹别扭"
+        line = f"{when} 前后有过一次{severity}（命中 {hits} 类信号词）：{detail}"
         if tail and tail not in lead:
             line += f"；收场信号来自 {tail.speaker}：「{_clean(tail.text)[:24]}」"
         out.append(line)
     return out
 
 
+#: 行为性甜蜜信号：不靠\"喜欢你\"这类词，靠约定/答应/一起去做的事
+#: （\"说定了\"\"我跟你组\"\"等我练两周\"\"下次还来\"——这些才是真实关系里的甜）
+SWEET_BEHAVIOR_WORDS = (
+    "说定了", "说定", "约定", "答应", "我跟你", "跟你组", "一起",
+    "等我", "下次还来", "下次叫你", "真的", "稳了", "值了",
+    "晚安", "谢了", "请你", "请我",
+)
+
+_SWEET_BEHAVIOR_RE = _compile(SWEET_BEHAVIOR_WORDS)
+
+
 def _sweet_items(msgs: list[Msg], limit: int = 6) -> list[str]:
+    """甜蜜瞬间：不只看情感词，也看行为性甜蜜信号。
+
+    很多关系的\"甜\"不在\"喜欢你\"\"想你\"这类词里，而在\"说定了\"\"我跟你组\"
+    \"下次还来\"这类行为里。只靠 POS_WORDS 打分，demo 里一条都抓不到，
+    于是把\"有这种好事不叫我\"这种抱怨当成甜蜜来凑数。
+    """
     scored: list[tuple[float, str]] = []
     for m in msgs:
         text = _clean(m.text)
-        if not (6 <= len(text) <= 60) or _is_noise(text):
+        if not (4 <= len(text) <= 60) or _is_noise(text):
             continue
-        score = 2.0 * len(_POS_RE.findall(text)) + 1.5 * len(_CARE_RE.findall(text))
+        score = 2.0 * len(_POS_RE.findall(text))
+        score += 1.5 * len(_CARE_RE.findall(text))
+        score += 1.5 * len(_SWEET_BEHAVIOR_RE.findall(text))
         if score <= 0:
             continue
         scored.append((score, f"{m.speaker}：「{text[:40]}」"))
@@ -928,12 +1017,6 @@ def _sweet_items(msgs: list[Msg], limit: int = 6) -> list[str]:
 
 #: 直球表达：想念 / 喜欢这类把情绪直接说出口的话
 DIRECT_WORDS = ("想你", "好想你", "喜欢你", "爱你", "抱抱", "亲亲", "么么", "离不开你")
-
-#: 亲密度刻度的话术。分数只是把四类信号摆在一起的结果，写出来是给人看的
-#: （"6/10，亲近"），不是给机器当阈值用的。
-_WARMTH_LABELS = ((2, "克制，有事说事"), (4, "熟，但有分寸"), (6, "亲近"),
-                  (8, "很亲，话里带黏"))
-
 
 def _spread(items: list, n: int) -> list:
     """等距取 n 个：跨时间取样，别让示范全挤在同一天。"""
@@ -959,65 +1042,14 @@ def _exchange_items(msgs: list[Msg], target: str, counterpart: str | None,
     if not counterpart:
         return []
 
-    pairs: list[tuple[list[str], list[str]]] = []
-    i = 0
-    while i < len(msgs):
-        j = i
-        theirs: list[str] = []
-        while j < len(msgs) and msgs[j].speaker == counterpart:
-            theirs.append(msgs[j].text)
-            j += 1
-        k = j
-        mine: list[str] = []
-        while k < len(msgs) and msgs[k].speaker == target:
-            mine.append(msgs[k].text)
-            k += 1
-        if theirs and mine:
-            pairs.append((theirs, mine))
-        i = k if k > i else i + 1
+    return [exchange.render() for exchange in select_exchanges(
+        reply_exchanges(msgs, target, counterpart), limit)]
 
-    def side(texts: list[str], top: int) -> list[str]:
-        """去掉媒体占位后还有字、且不太长的那几条。"""
-        out = []
-        for text in texts[:top]:
-            if _is_media_only(text):
-                continue
-            cleaned = _clean(BRACKET_TAG_RE.sub(" ", text))
-            if cleaned:
-                out.append(cleaned)
-        return out
-
-    valid: list[tuple[list[str], list[str]]] = []
-    for theirs, mine in pairs:
-        left, right = side(theirs, 3), side(mine, 3)
-        if not left or not right:
-            continue
-        # "对方"那句太短（啊？/不是）是从上一句截下来的半截话，当示范会教出没头没尾的接话
-        if not (4 <= len("".join(left)) <= 40) or len("".join(right)) > 40:
-            continue
-        valid.append((left, right))
-
-    out: list[str] = []
-    seen: set[str] = set()
-    for left, right in _spread(valid, limit):
-        key = "".join(left)[:6]
-        if key in seen:
-            continue
-        seen.add(key)
-        out.append("对方：" + "".join(f"「{x}」" for x in left)
-                   + " → 我：" + "".join(f"「{x}」" for x in right))
-    return out
 
 
 def _warmth_items(msgs: list[Msg], target: str, stats: Stats,
                   relation: str = "朋友") -> list[str]:
-    """亲疏的刻度，以及"别比它更热"的边界。
-
-    亲密度不能凭"看起来甜不甜"说：同一份记录，有人觉得腻、有人觉得淡。
-    这里只做可数的事——关心表达、亲昵称呼、直球、表情各占多少，
-    合起来给一个 0~10 的档位，再写明**哪些信号在记录里一次都没出现**：
-    "没有出现过的表达"就是模仿时最容易过界的地方。
-    """
+    """记录外露表达的线索与样本空缺，不把词频折算成人际亲密度。"""
     texts = [m.text for m in msgs if m.speaker == target and m.text.strip()]
     if not texts:
         return []
@@ -1025,26 +1057,11 @@ def _warmth_items(msgs: list[Msg], target: str, stats: Stats,
     care = sum(1 for t in texts if _CARE_RE.search(t))
     direct = sum(1 for t in texts if any(w in t for w in DIRECT_WORDS))
     emoji = sum(1 for t in texts
-                if any(not MEDIA_RE.fullmatch(e) for e in EMOJI_RE.findall(t)))
+                if "[表情]" in t or "[动画表情]" in t
+                or any(not MEDIA_RE.fullmatch(e) for e in EMOJI_RE.findall(t)))
     pets = 0 if relation == "同事" else sum(1 for t in texts if any(p in t for p in PET_NAMES))
 
-    score = 0.0
-    if care:
-        score += 3 if _pct(care, n) >= 5 else 2 if _pct(care, n) >= 2 else 1
-    if pets:
-        score += 3 if pets >= 3 else 2
-    if direct:
-        score += 3 if direct >= 3 else 2
-    if emoji:
-        score += 1.5 if _pct(emoji, n) >= 30 else 1
-    score = min(10, round(score))
-    label = "黏糊，甜度很高"
-    for cap, text in _WARMTH_LABELS:
-        if score <= cap:
-            label = text
-            break
-
-    items = [f"亲密度 {score}/10（{label}）：关心类表达 {care} 条、亲昵称呼 {pets} 条、"
+    items = [f"外露表达线索（不代表关系亲密度）：关心类表达 {care} 条、亲昵称呼 {pets} 条、"
              f"直球表达 {direct} 条、带表情的消息占 {_pct(emoji, n):.0f}%"]
 
     # 温度的"载体"：亲近主要落在哪儿，模仿时就往哪儿使劲
@@ -1061,21 +1078,16 @@ def _warmth_items(msgs: list[Msg], target: str, stats: Stats,
                                        (emoji, "表情 / 表情包")) if not flag]
     if missing:
         items.append("记录里没有出现过的表达：" + "、".join(missing)
-                     + "；模仿时不要凭「看起来应该有」补上")
+                     + "；这是本次样本的空缺，不代表 TA 永远不会这样表达；日常不要主动堆这些表达")
 
     gaps = reply_gaps(msgs).get(target, [])
     if gaps:
         med = _median(gaps)
         items.append(f"冷热节奏：通常隔 {_fmt_minutes(med)}回"
-                     + ("（回得快，对话是黏着的）" if med < 3 else
-                        "（不是秒回型，别表现得太即时）"))
-        if score <= 2 and med < 30:
-            # 四类信号全为零不代表这个人冷淡：很多人只是不说，但一直在回。
-            # 直接写"0/10"会让模仿出来的分身比本人冷一截。
-            items.append("别把它读成冷淡：外露的亲昵不多，可对话是黏着的——"
-                         f"平均 {_fmt_minutes(med)}就回一句，亲近在节奏里不在词句里")
-    items.append("别比记录更热：上面每个数字都有出处，超出这一档的话"
-                 "（肉麻的话、秒回、长篇表白、过度关心）一律不要说")
+                     + "（历史消息间隔仅供参考，不需要刻意延迟当前回复）")
+    if not direct and not pets:
+        items.append("亲昵称呼和直球表达少，不能据此把所有回复写成冷淡或拒绝交流；先看完整接话示范")
+    items.append("亲疏按当前话题和这些原话示范把握；没有直球词频不能当作冷淡或拒绝关心的理由")
     return items
 
 
@@ -1084,21 +1096,11 @@ def _warmth_items(msgs: list[Msg], target: str, stats: Stats,
 # ----------------------------------------------------------------------------
 
 def _rule_items(msgs: list[Msg], target: str, stats: Stats) -> list[str]:
-    texts = [m.text for m in msgs if m.speaker == target and m.text.strip()]
+    texts = _lines(msgs, target)
     if not texts:
         return []
     n = len(texts)
     rules: list[str] = []
-
-    gaps = reply_gaps(msgs).get(target, [])
-    if gaps:
-        med = _median(gaps)
-        if med < 3:
-            rules.append(f"回消息快，通常 {_fmt_minutes(med)}内就回")
-        elif med < 60:
-            rules.append(f"不会秒回：通常隔 {_fmt_minutes(med)} 才回一句，别表现得太即时")
-        else:
-            rules.append(f"回消息很慢，中位间隔 {_fmt_minutes(med)}；不要写成秒回的人")
 
     no_end = sum(1 for t in texts if t.strip()[-1] not in SENT_END)
     if no_end / n > 0.6:
@@ -1110,24 +1112,17 @@ def _rule_items(msgs: list[Msg], target: str, stats: Stats) -> list[str]:
     if _median(lengths) <= 8:
         rules.append(f"偏好短句（中位 {_median(lengths):.0f} 字），一次说一点，不要长篇大论")
 
-    if stats.total:
-        late = stats.late_night / stats.total * 100
-        if late >= 25:
-            rules.append(f"深夜型选手（{late:.0f}% 的消息在 23:00–05:00），夜里更活跃")
-
     particles = _tone_counter(texts)
     if particles:
-        top = "".join(p for p, _ in particles.most_common(4))
-        rules.append(f"常用语气词「{top}」，说话要带这些尾巴")
+        top = "、".join(p for p, count in particles.most_common(4) if count >= 3)
+        if top:
+            rules.append(f"语气词 {top} 可按示范自然使用，不要每句都加或拼在一起")
 
     emoji: Counter[str] = Counter(e for t in texts for e in EMOJI_RE.findall(t)
                                   if not MEDIA_RE.fullmatch(e))
     if emoji:
         rules.append("会用表情标记：" + "、".join(e for e, _ in emoji.most_common(4)))
-    else:
-        rules.append("从不使用表情或表情包")
-
-    rules.append("以上规则来自统计；没被记录过的细节不要编造，宁可不回答")
+    rules.append("口头禅和旧话题只在语境合适时用；模仿接法，不要复制旧事实当成当前发生的事")
     return rules
 
 
@@ -1137,7 +1132,7 @@ def _rule_items(msgs: list[Msg], target: str, stats: Stats) -> list[str]:
 
 def _identity_items(desc: str) -> list[str]:
     if desc:
-        return [desc]
+        return [f"用户补充（未经聊天记录核实）：{desc}"]
     return ["记录里没有直接的身份信息；建议用 --desc 补充职业、关系、认识方式等背景"]
 
 
@@ -1151,18 +1146,34 @@ def distill(msgs: list[Msg], target: str, stats: Stats, desc: str = "",
     # 地名已经单独成节、说话人名字属于称呼，都不该再混进口头禅
     phrase_items = _phrase_items(target_lines, other_lines,
                                  exclude=set(place_hits) | {m.speaker for m in msgs})
+    if all(m.ts for m in msgs):
+        # 同一会话里的复读不等于跨情境的口癖；有时间时额外检查会话覆盖。
+        phrase_items = [item for item in phrase_items if any(
+            sum(any(m.speaker == target and quote in m.text for m in session)
+                for session in _sessions(msgs)) >= 2
+            for quote in re.findall(r'「([^」]+)」', item))]
     style_items = _style_items(msgs, target, stats)
+    exchanges = reply_exchanges(msgs, target, counterpart) if counterpart else []
+    rules = _rule_items(msgs, target, stats)
+    emotions = _emotion_items(msgs, target, relation)
+    warmth = _warmth_items(msgs, target, stats, relation)
+    situations = situation_items(exchanges)
+    # 稳定特点只从跨会话重复的接法中选；单次片段留在情境示范中。
+    character_items = [item for item in situations if re.search(r"在 \d+ 段会话中出现", item)][:4]
 
     persona = {
         "身份": _identity_items(desc),
-        "说话风格": style_items,
+        "人物特点": character_items,
+        "说话风格": rules[:2],
         "口头禅": phrase_items,
+        "情境策略": situations,
         "接话方式": _exchange_items(msgs, target, counterpart),
-        "情感模式": _emotion_items(msgs, target, relation),
-        "温度与分寸": _warmth_items(msgs, target, stats, relation),
-        "关系行为": _relation_items(msgs, target, stats),
+        "情感模式": [item for item in emotions if "例如「" in item],
+        "温度与分寸": [item for item in warmth if not item.startswith(("外露表达", "冷热节奏", "温度主要"))],
+        "关系行为": [],
+        "统计画像": style_items + emotions + warmth + _relation_items(msgs, target, stats),
         "典型例句": _example_items(msgs, target, phrase_items),
-        "硬规则": _rule_items(msgs, target, stats),
+        "硬规则": rules,
     }
     memory = {
         "关系时间线": _timeline_items(msgs),
@@ -1170,6 +1181,6 @@ def distill(msgs: list[Msg], target: str, stats: Stats, desc: str = "",
         "inside_jokes": _joke_items(msgs, target, counterpart),
         "争吵模式": _quarrel_items(msgs),
         "甜蜜瞬间": _sweet_items(msgs),
-        "称呼与专属用语": _call_items(msgs),
+        "称呼与专属用语": _call_items(msgs, phrase_items=phrase_items),
     }
     return persona, memory

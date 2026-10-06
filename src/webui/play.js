@@ -10,7 +10,7 @@ const $ = (id) => document.getElementById(id);
    所以一直握着这个节点本身：节点脱离文档也还活着，放回去即可。 */
 const hello = $("hello");
 
-const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 
 const humanSize = (n) =>
   n > 1024 * 1024 ? (n / 1024 / 1024).toFixed(1) + " MB"
@@ -20,7 +20,7 @@ const humanSize = (n) =>
 async function api(path, options) {
   const res = await fetch(path, options);
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || `请求失败（${res.status}）`);
+  if (!res.ok || data.error) throw new Error(data.error || `请求失败（${res.status}）`);
   return data;
 }
 
@@ -47,6 +47,37 @@ function bubble(kind, text, meta) {
   $("scroll").appendChild(el);
   $("scroll").scrollTop = $("scroll").scrollHeight;
   return el;
+}
+
+function addFeedback(el, input, result) {
+  const form = document.createElement('form');
+  form.className = 'chat-feedback';
+  form.innerHTML = '<label>这句像吗？<select aria-label="反馈类型">' +
+    ['像本人', '太客气', '答非所问', '场景用错', '事实错误', '其他'].map(s => `<option>${s}</option>`).join('') +
+    '</select></label><input aria-label="反馈备注" placeholder="哪里不对，或本人会怎么接（可选）" maxlength="500">' +
+    '<button class="btn btn--ghost" type="submit">保存反馈</button><span role="status"></span>';
+  form.addEventListener('submit', async ev => {
+    ev.preventDefault();
+    const button = form.querySelector('button');
+    const status = form.querySelector('[role="status"]');
+    button.disabled = true;
+    try {
+      await api(`/api/workbench/${encodeURIComponent(result.skill)}/feedback`, {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({user: input, reply: result.reply, version: result.version,
+          scenario_id: result.scenario_id, label: form.querySelector('select').value,
+          note: form.querySelector('input').value})
+      });
+      status.textContent = '已保存，将用于后续试聊、生成和测评';
+      form.querySelector('select').disabled = form.querySelector('input').disabled = true;
+      window.parent.postMessage({type: 'kith-feedback', skill: result.skill}, location.origin);
+    } catch (err) {
+      status.textContent = err.message;
+      button.disabled = false;
+    }
+  });
+  el.appendChild(form);
+  $('scroll').scrollTop = $('scroll').scrollHeight;
 }
 
 /* ───────────────────────── 开局 ───────────────────────── */
@@ -184,6 +215,7 @@ function fatal(message) {
 /* ───────────────────────── 发送 ───────────────────────── */
 
 async function ask() {
+  const input = history[history.length - 1].content;
   busy = true;
   setState("TA 正在想…", "running");
   $("say").disabled = true;
@@ -208,7 +240,8 @@ async function ask() {
     });
     thinking.remove();
     if (res.error) throw new Error(res.error);
-    bubble("ta", res.reply, res.seconds ? `${res.seconds} 秒` : "");
+    const response = bubble("ta", res.reply, res.seconds ? `${res.seconds} 秒` : "");
+    addFeedback(response, input, res);
     history.push({ role: "assistant", content: res.reply });
     setState("TA 回了", "done");
   } catch (err) {
