@@ -212,10 +212,7 @@ body {
 }
 
 .brand { display: flex; align-items: center; gap: 11px; }
-/* 品牌标记是张图片（96px 源图，30px 显示，3x 屏也够清晰）。
-   原来这里是个蓝底白字的方块，换成图片后背景/字色/字体都交给图本身；
-   圆角与阴影保留，否则它会从顶栏的玻璃质感里"浮"出来。
-   阴影从原来的品牌蓝改中性色：蓝光是给蓝底方块打的，压在图片上会显脏。 */
+/* 项目 logo 按原比例显示；圆角与中性阴影融入顶栏。 */
 .brand__mark {
   display: block;
   width: 30px; height: 30px;
@@ -1036,6 +1033,18 @@ input:focus, select:focus {
 .review-button { border: 1px solid var(--line); border-radius: var(--r-sm); padding: 7px 12px; color: var(--blue); background: #fff; cursor: pointer; }
 .review-button:hover { border-color: var(--blue); }
 .review-button:disabled { opacity: .5; cursor: wait; }
+.source-link { margin: 4px 6px 4px 0; font-size: 12px; }
+.message-row { scroll-margin-top: 82px; }
+.message-row--selected { border-color: var(--blue); box-shadow: 0 0 0 2px var(--tint-blue); }
+.coverage-grid, .ab-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.coverage-grid .review-card, .ab-grid .review-card { margin: 0; }
+.ab-reply { white-space: pre-wrap; min-height: 42px; background: var(--tint-blue); padding: 10px; border-radius: var(--r-sm); }
+.is-chosen { border-color: var(--blue); background: var(--tint-blue); }
+.question-card textarea, #incremental-json, .review-config textarea, .review-config input { width: 100%; }
+#message-search { width: min(100%, 520px); margin: 8px 0 12px; }
+@media (max-width: 680px) {
+  .coverage-grid, .ab-grid { grid-template-columns: 1fr; }
+}
 .review-config { display: grid; gap: 8px; padding-top: 10px; }
 .review-config label { display: grid; gap: 4px; font-size: 12px; }
 .review-config input, .review textarea { width: 100%; box-sizing: border-box; }

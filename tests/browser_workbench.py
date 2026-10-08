@@ -62,14 +62,15 @@ def run(browser_channel=None, screenshots=None):
                 page.goto(base)
                 page.wait_for_load_state('networkidle')
                 # Inspect the rendered state before interactions.
-                assert page.locator('#tabs .tab').count() == 10
+                assert page.locator('#tabs .tab').count() == 14
                 expect(page.locator('#review-skill')).to_have_value('legacy')
 
                 def tab(name):
                     page.locator(f'.tab[data-view="{name}"]').click()
                     expect(page.locator('#view-' + name)).to_be_visible()
 
-                for name in ['skill', 'memory', 'scenarios', 'evaluation', 'feedback', 'versions', 'privacy']:
+                for name in ['skill', 'memory', 'scenarios', 'evidence', 'messages', 'updates', 'ab',
+                             'evaluation', 'feedback', 'versions', 'privacy']:
                     tab(name)
                     expect(page.locator('#view-' + name)).not_to_contain_text('正在读取')
                 checked.append('legacy compatibility')
@@ -89,11 +90,68 @@ def run(browser_channel=None, screenshots=None):
                 first = versions.current(root)['version']
                 checked.append('upload, parse and offline generation')
 
-                for name in ['log', 'verify', 'skill', 'memory', 'scenarios', 'evaluation', 'feedback', 'versions', 'privacy', 'play']:
+                for name in ['log', 'verify', 'skill', 'memory', 'scenarios', 'evidence', 'messages',
+                             'updates', 'ab', 'evaluation', 'feedback', 'versions', 'privacy', 'play']:
                     tab(name)
                     if name != 'play':
                         expect(page.locator('#view-' + name)).not_to_contain_text('正在读取')
-                checked.append('all ten tabs')
+                checked.append('all fourteen tabs')
+
+                indexed = storage.load(root / 'references/message-index.json')['messages']
+                for source_tab in ['evidence', 'scenarios']:
+                    tab(source_tab)
+                    link = page.locator(f'#view-{source_tab} [data-source]').first
+                    source_ids = [int(value) for value in link.get_attribute('data-source').split(',')]
+                    link.click()
+                    expect(page.locator('#view-messages')).to_be_visible()
+                    for index in source_ids:
+                        quote = next(row['text'] for row in indexed if row['index'] == index)
+                        expect(page.locator(f'#message-{index}')).to_have_class('review-card message-row message-row--selected')
+                        expect(page.locator(f'#message-{index}')).to_contain_text(quote)
+                page.locator('#message-all').click()
+                expect(page.locator('#message-toolbar')).to_contain_text('123 条')
+                page.locator('[data-message-page="1"]').click()
+                expect(page.locator('#message-toolbar')).to_contain_text('第 2 / 2 页')
+                page.locator('#message-search').fill('请我喝水')
+                assert page.locator('.message-row').count() > 0
+                checked.append('specificity, coverage, source jumps and searchable paginated messages')
+
+                tab('updates')
+                card = page.locator('[data-question-card]').first
+                question_id = card.get_attribute('data-question-card')
+                card.locator('[data-answer]').fill('仅限轻松聊天时使用；认真难过时先接住情绪')
+                card.locator('[data-answer-status="confirmed"]').click()
+                card = page.locator(f'[data-question-card="{question_id}"]')
+                expect(card.locator('.review-badge').last).to_have_text('已确认')
+                card.locator('[data-answer-status="rejected"]').click()
+                expect(card.locator('.review-badge').last).to_have_text('已否定')
+                checked.append('confirmation and rejection with explicit scope')
+
+                page.locator('#incremental-file').set_input_files(str(sample))
+                expect(page.locator('#incremental-file-status')).to_contain_text('已读取 123 条')
+                page.locator('#incremental-preview').click()
+                expect(page.locator('#incremental-result')).to_contain_text('新增 0 条 · 重复 123 条')
+                expect(page.locator('#incremental-apply')).to_be_disabled()
+                page.get_by_text('也可填写消息数组', exact=True).click()
+                additions = [{'time': '2026-10-06T12:00:00', 'speaker': '小蒯', 'text': '谢谢你提醒我'},
+                             {'time': '2026-10-06T12:01:00', 'speaker': '潘小雨', 'text': '请我喝水'}]
+                page.locator('#incremental-json').fill(json.dumps(additions, ensure_ascii=False))
+                page.locator('#incremental-preview').click()
+                expect(page.locator('#incremental-result')).to_contain_text('新增 2 条 · 重复 0 条')
+                expect(page.locator('#incremental-apply')).to_be_enabled()
+                page.locator('#incremental-apply').click()
+                expect(page.locator('#view-updates')).to_contain_text('上次合并 2 条')
+                assert versions.current(root)['version'] != first
+                merged = storage.load(root / 'references/message-index.json')['messages']
+                assert merged[:123] == indexed
+                tab('versions')
+                page.locator(f'[data-rollback="{first}"]').click()
+                page.get_by_role('button', name='确认回滚', exact=True).click()
+                tab('messages')
+                expect(page.locator('#message-toolbar')).to_contain_text('123 条')
+                checked.append('incremental file deduplication, JSON merge and baseline rollback')
+
+                tab('play')
 
                 frame = page.frame_locator('#playframe')
                 expect(frame.locator('#say')).to_be_enabled()
@@ -163,6 +221,28 @@ def run(browser_channel=None, screenshots=None):
                 assert len(calls) >= total + 1
                 checked.append('static and model regression through real HTTP')
 
+                tab('ab')
+                for side in ('a', 'b'):
+                    page.locator(f'#ab-base-{side}').fill('http://local.invalid/v1')
+                    page.locator(f'#ab-model-{side}').fill('local-' + side)
+                    page.locator(f'#ab-recipe-{side}').fill('轻松一点' if side == 'a' else '保留原话的措辞')
+                page.locator('#ab-start').click()
+                expect(page.locator('#ab-run')).to_be_enabled()
+                ab_total = page.locator('.ab-case').count()
+                assert ab_total > 0
+                for side in ('a', 'b'):
+                    page.locator(f'#ab-key-{side}').fill('local-test-only-key')
+                page.locator('#ab-run').click()
+                expect(page.locator('#ab-progress')).to_have_text(f'已完成 {ab_total * 2} / {ab_total * 2} 次回复', timeout=30000)
+                expect(page.locator('#ab-key-a')).to_have_value('')
+                expect(page.locator('#ab-key-b')).to_have_value('')
+                page.locator('[data-ab-choice="a"]').first.click()
+                expect(page.locator('[data-ab-choice="a"]').first).to_have_class('review-button is-chosen')
+                tab('feedback')
+                tab('ab')
+                expect(page.locator('[data-ab-choice="a"]').first).to_have_class('review-button is-chosen')
+                checked.append('fixed-case A/B model and recipe comparison, human choice and key clearing')
+
                 # Simulate manual edits, preserving a custom reference on rollback.
                 custom = root / 'references/custom.md'
                 custom.write_text('用户自己添加的参考', encoding='utf-8')
@@ -217,7 +297,8 @@ def run(browser_channel=None, screenshots=None):
 
                 for width in [390, 320]:
                     page.set_viewport_size({'width': width, 'height': 844})
-                    for name in ['memory', 'scenarios', 'evaluation', 'feedback', 'versions', 'privacy', 'play']:
+                    for name in ['memory', 'scenarios', 'evidence', 'messages', 'updates', 'ab',
+                                 'evaluation', 'feedback', 'versions', 'privacy', 'play']:
                         tab(name)
                         if name == 'play':
                             expect(frame.locator('#say')).to_be_enabled()

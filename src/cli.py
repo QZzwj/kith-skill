@@ -2,11 +2,13 @@ import argparse
 import os
 import re
 import sys
+import uuid
 from collections import Counter
 from pathlib import Path
 
 from . import (cite, corpus, offline, quality, relation, verify, scenarios,
                memory_ledger, evaluation, feedback, privacy_review, storage, versions)
+from . import specificity, coverage, message_index, questions
 from .analysis import analyse, sample_sessions
 from .llm import consult_llm
 from .package import upload_to_device, write_package
@@ -395,6 +397,33 @@ def main(argv=None) -> int:
     extra['references/scenarios.json'] = storage.dumps(scenarios.package_data(routes))
     extra['references/memory-ledger.json'] = storage.dumps(memory_ledger.package_data(ledger))
     extra['references/evaluation.json'] = storage.dumps({'schema_version': 1, 'cases': cases})
+    scores = specificity.build(persona, evidence_msgs, main_name)
+    matrix = coverage.build(routes, evidence_msgs, main_name,
+                            back_name or offline._counterpart(stats_main, main_name) or '')
+    indexed = message_index.build(evidence_msgs)
+    indexed['citations'] = cites.sources()
+    if args.corpus_mb <= 0:
+        included = set(cites.sources().values())
+        included.update(e['message'] for item in scores['items'] for e in item['evidence'])
+        included.update(e['message'] for item in ledger for e in item['evidence'])
+        included.update(i for item in matrix['matrix'] for i in item['message_indices'])
+        included.update(i for item in routes for e in item['examples']
+                        for i in e['incoming_messages'] + e['reply_messages'])
+        indexed['messages'] = [row for row in indexed['messages'] if row['index'] in included]
+        indexed['complete'] = False
+    baseline_id = uuid.uuid4().hex
+    # Keep the complete redacted corpus locally for incremental updates even
+    # when the user chooses a package without the transcript reference layer.
+    storage.write(storage.local_dir(skill_root) / 'baselines' / (baseline_id + '.json'),
+                  message_index.build(evidence_msgs))
+    extra['references/observations.json'] = storage.dumps({
+        'schema_version': 1, 'baseline_id': baseline_id, 'persona': persona, 'memory': memory,
+        'target': main_name, 'counterpart': back_name or offline._counterpart(stats_main, main_name) or '',
+        'relation': relation_name, 'redacted': bool(scrub), 'corpus_enabled': args.corpus_mb > 0})
+    extra['references/specificity.json'] = storage.dumps(scores)
+    extra['references/coverage.json'] = storage.dumps(matrix)
+    extra['references/message-index.json'] = storage.dumps(indexed)
+    extra['references/questions.json'] = storage.dumps(questions.build(scores, matrix, ledger))
     if both:
         extra[PROFILE_FILE[audience]] = profile_md
     zip_path = write_package(Path(args.out), args.name, skill_md, memory_md,

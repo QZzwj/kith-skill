@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 from .models import Msg
-from .verify import FUZZY_THRESHOLD, QUOTE_RE, VERBATIM_FIELDS, Corpus
+from .verify import FUZZY_THRESHOLD, QUOTE_RE, VERBATIM_FIELDS, Corpus, _norm
 
 #: 每条结论最多挂几个出处：够看清"这句话从哪来"，又不至于把文档铺满编号
 PER_ITEM = 2
@@ -57,6 +57,10 @@ class Citations:
         #: 那边脱了这边不脱就等于没脱。
         self.redact = redact
         self._number: dict[str, int] = {}      # 出处行 → 编号
+        self._sources = {}
+        self._message_for_line = []
+        for number, msg in enumerate(msgs, 1):
+            self._message_for_line.extend(number for raw in (msg.text or '').split('\n') if len(_norm(raw.strip())) >= 2)
 
     # ---------------------------------------------------------------- 生成
 
@@ -82,6 +86,7 @@ class Citations:
                 continue
             ref = self._ref_of(idx)
             number = self._number.setdefault(ref, len(self._number) + 1)
+            self._sources[number] = self._message_for_line[idx]
             if number not in numbers:
                 numbers.append(number)
         return "".join(f" [{n}]" for n in numbers)
@@ -102,3 +107,6 @@ class Citations:
     @property
     def count(self) -> int:
         return len(self._number)
+
+    def sources(self) -> dict:
+        return {str(number): index for number, index in self._sources.items()}

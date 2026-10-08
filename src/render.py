@@ -142,6 +142,8 @@ description: {json.dumps(trigger, ensure_ascii=False)}
   再用 `skill_read` 读取 `references/memory.md` 对应片段，用它的细节回答，不要凭空编。
 {refs_lines}- 原话编号在 `references/quotes.md`；需要核对统计和观察范围时读 `references/profile.md`。日常回复不照读统计报告。
 - `references/scenarios.json` 保存情境与真实接话；`references/memory-ledger.json` 保存记忆状态、观察日期和出处；`references/evaluation.json` 是回归用例，历史答案仅供对照。
+- `references/specificity.json` 与 `references/coverage.json` 保存证据评分和情境覆盖；`references/message-index.json` 可定位原话。分数不代表性格准确率。
+- `references/questions.json` 保存证据不足的待确认问题。没有确认的计划、单次观察和模糊记忆只作有限的历史参考，相关话题先询问当前情况。
 """
 
 

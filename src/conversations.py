@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import timedelta
 
 from .models import Msg, SESSION_GAP
@@ -61,6 +61,8 @@ class Exchange:
     incoming: list[str]
     reply: list[str]
     session: int
+    incoming_messages: list[int] = field(default_factory=list)
+    reply_messages: list[int] = field(default_factory=list)
 
     def render(self) -> str:
         return ("对方：" + "".join(f"「{x}」" for x in self.incoming)
@@ -70,25 +72,28 @@ class Exchange:
 def reply_exchanges(msgs: list[Msg], target: str, counterpart: str) -> list[Exchange]:
     """只配对同一会话内相邻的完整发言；第三人或纯媒体发言不能被跨过去。"""
     out: list[Exchange] = []
+    offset = 0
     for session_id, session in enumerate(split_sessions(msgs)):
-        runs: list[tuple[str, list[str]]] = []
-        for msg in session:
+        runs: list[tuple[str, list[tuple[int, str]]]] = []
+        for index, msg in enumerate(session, offset + 1):
             if runs and runs[-1][0] == msg.speaker:
-                runs[-1][1].append(msg.text)
+                runs[-1][1].append((index, msg.text))
             else:
-                runs.append((msg.speaker, [msg.text]))
+                runs.append((msg.speaker, [(index, msg.text)]))
+        offset += len(session)
         for (who, incoming), (speaker, reply) in zip(runs, runs[1:]):
             if who != counterpart or speaker != target:
                 continue
-            def text_only(lines: list[str]) -> list[str]:
-                return [x.strip() for x in lines if x.strip()
+            def text_only(lines):
+                return [(index, x.strip()) for index, x in lines if x.strip()
                         and not re.fullmatch(r"(?:\s*\[[^\[\]]*\]\s*)+", x)]
-            left, right = text_only(incoming), text_only(reply)
+            left_rows, right_rows = text_only(incoming), text_only(reply)
+            left, right = [x for _, x in left_rows], [x for _, x in right_rows]
             if not left or not right or len(left) > 3 or len(right) > 3:
                 continue
             if max(len("".join(left)), len("".join(right))) > 80:
                 continue
-            out.append(Exchange(left, right, session_id))
+            out.append(Exchange(left, right, session_id, [i for i, _ in left_rows], [i for i, _ in right_rows]))
     return out
 
 

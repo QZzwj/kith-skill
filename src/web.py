@@ -37,7 +37,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote, urlparse
 
-from . import cli, storage, versions, scenarios, evaluation, feedback, privacy_review
+from . import (cli, storage, versions, scenarios, evaluation, feedback, privacy_review,
+               specificity, coverage, message_index, questions, incremental, ab)
 from .conversations import reply_exchanges, select_exchanges
 from .llm import CHAT_TEMPERATURE, llm_call, llm_chat
 from .models import Msg
@@ -472,6 +473,9 @@ def _persona_prompt(target: Job | PlayTarget, text: str = "") -> str:
     corrections = feedback.render_rules(feedback.read(root), routes, text=text)
     if corrections:
         blocks.append(corrections)
+    review_prompt = questions.prompt(root)
+    if review_prompt:
+        blocks.append(review_prompt)
     blocks.append('记忆里的日期只表示当时提及。历史计划与旧承诺的当前有效性需要确认；不推断已经兑现，也不重新许诺。')
     blocks.append(PLAY_HINT.format(name=_persona_title(target)))
     return "\n\n---\n\n".join(blocks)
@@ -633,6 +637,8 @@ def _reply(target: Job | PlayTarget, payload: dict, messages: list) -> dict:
         system = _persona_prompt(target, turns[-1]['content'])
         matched = scenarios.route(turns[-1]['content'], _routes(root)) or {}
     started = time.monotonic()
+    if payload.get('recipe'):
+        system += '\n\n【本次对比配方】\n' + str(payload['recipe'])[:4000]
     reply = llm_chat(str(payload.get('base_url') or '').strip() or _argv_value(target, '--base-url') or DEFAULT_BASE_URL,
                      api_key, str(payload.get('model') or '').strip() or _argv_value(target, '--model') or DEFAULT_MODEL,
                      system, turns, temperature=_chat_temperature(payload))
@@ -777,6 +783,32 @@ class _Handler(BaseHTTPRequestHandler):
                     raise ValueError('技能内容已变化，请重新测评')
                 report = evaluation.save(root, {case['id']: result['reply']}, _routes(root), result['fingerprint'])
                 return self._json({'case': case['id'], **result, 'report': report})
+            if post and action == 'incremental':
+                if payload.get('token'):
+                    uploaded = _UPLOADS.get(str(payload['token']))
+                    if not uploaded or not uploaded.is_file():
+                        raise ValueError('上传已失效，请重新选择增量记录')
+                    incoming = load_messages(uploaded)
+                else:
+                    incoming = incremental.to_messages(payload.get('messages', []))
+                if not incoming:
+                    raise ValueError('增量记录为空，请选择文件或填写消息数组')
+                mode = payload.get('mode', 'preview')
+                if mode == 'apply':
+                    return self._json(incremental.apply(root, incoming, payload))
+                if mode != 'preview':
+                    raise ValueError('增量操作只支持预览或合并')
+                with storage.lock(root):
+                    return self._json(incremental.preview(root, incoming, str(payload.get('fingerprint') or '')))
+            if post and action == 'ab' and payload.get('mode') == 'run':
+                with storage.lock(root):
+                    run, case, config = ab.prepare(root, payload)
+                api_payload = {**payload, **config}
+                if not str(api_payload.get('api_key') or '').strip():
+                    raise ValueError('A/B 运行需要填写 API Key；只保存在本次请求内')
+                result = _reply(PlayTarget(OUT_ROOT, name), api_payload,
+                                [{'role': 'user', 'content': case['prompt']}])
+                return self._json(ab.save(root, payload, result, _routes(root)))
             with storage.lock(root):
                 if not post and action == 'package':
                     return self._json(Job('', [], root.parent, name).artifacts())
@@ -788,8 +820,37 @@ class _Handler(BaseHTTPRequestHandler):
                                       {'Content-Disposition': "attachment; filename*=UTF-8''" + quote(archive.name)})
                 if not post and action == 'scenarios':
                     return self._json({'scenarios': _routes(root)})
+                if not post and action == 'specificity':
+                    return self._json(storage.load(root / 'references/specificity.json', {'items': [], 'traits': [], 'summary': {}}))
+                if not post and action == 'coverage':
+                    return self._json(storage.load(root / 'references/coverage.json', {'matrix': [], 'summary': {}}))
+                if not post and action == 'messages':
+                    return self._json(storage.load(root / 'references/message-index.json', {'messages': []}))
                 if not post and action == 'memory':
                     return self._json(storage.load(root / 'references/memory-ledger.json', {'memories': []}))
+                if action == 'questions':
+                    if post:
+                        return self._json(questions.answer(root, payload))
+                    return self._json(questions.view(root))
+                if action == 'incremental':
+                    report = storage.load(storage.local_dir(root) / 'incremental-report.json', {})
+                    try:
+                        info, _ = incremental.baseline(root)
+                        error = ''
+                    except ValueError as exc:
+                        info, error = {}, str(exc)
+                    return self._json({**info, 'last_report': report, 'available': not error,
+                                       'error': error, **versions.state(root)})
+                if action == 'ab':
+                    if not post:
+                        return self._json(ab.view(root))
+                    mode = payload.get('mode', 'start')
+                    routes = _routes(root)
+                    if mode == 'start':
+                        return self._json(ab.start(root, payload, routes))
+                    if mode == 'choose':
+                        return self._json(ab.choose(root, payload))
+                    raise ValueError('A/B 操作不支持')
                 if action == 'evaluation':
                     routes = _routes(root)
                     if post:
@@ -963,7 +1024,7 @@ def main(argv=None) -> int:
         return 2
 
     server = ThreadingHTTPServer((args.host, args.port), _Handler)
-    url = f"http://{args.host}:{args.port}/"
+    url = f"http://{args.host}:{server.server_port}/"
     print(f"kith-skill web 已启动：{url}")
     print(f"  输出目录：{OUT_ROOT}（打包好的 zip 会落在这里）")
     print(f"  临时目录：{SESSION_DIR}（只放上传的聊天记录，退出即删）")

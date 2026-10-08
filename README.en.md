@@ -1,3 +1,7 @@
+<p align="center">
+<img src="logo.png" width="160" height="160" alt="kith-skill logo">
+</p>
+
 # kith-skill
 
 <div align="center"><img alt="License" src="https://img.shields.io/badge/license-MIT-green.svg"><img alt="Python" src="https://img.shields.io/badge/python-3.10%2B-3776AB.svg"></div>
@@ -18,8 +22,10 @@ How to read: [What you get](#what-you-get) · [Six-step pipeline](#the-six-step-
 
 ## First look
 
+Screenshots use the bundled synthetic chat. English controls, notices and logs are translated only during capture; the application UI, original quotes and generated persona text remain Chinese. Try-chat and A/B use local model substitutes to demonstrate the workflow.
+
 <p align="center">
-<img src="docs/images/tutorial-a4-log.png" width="100%" alt="First look: the run log of an offline pass — six pipeline steps, verification counts and pack size in one column">
+<img src="docs/images/en/tutorial-a4-log.png" width="100%" alt="First look: the run log of an offline pass — six pipeline steps, verification counts and pack size in one column">
 </p>
 
 One web workbench, two commands, two routes. The left column builds the pack and the right column accepts it: as soon as a run finishes you can say a couple of things to them under "try-chat", and if it does not feel right, edit the artifact by hand or change the recipe and re-run.
@@ -33,6 +39,11 @@ One web workbench, two commands, two routes. The left column builds the pack and
 | `references/scenarios.json` | Situations, trigger signals, response moves, real adjacent exchanges and evidence strength |
 | `references/memory-ledger.json` | Memory dates, evidence and status: fact / plan / promise / mentioned / joke / uncertain |
 | `references/evaluation.json` | Regression cases derived from real situations, with original replies as references |
+| `references/specificity.json` | Trait specificity: quote count, session count, distinctive terms and generalization risk |
+| `references/coverage.json` | Situation coverage: covered, insufficient evidence or missing replies |
+| `references/message-index.json` | Searchable messages linked from trait, situation and memory evidence |
+| `references/questions.json` | Questions about uncertain observations; answers remain in local state |
+| `references/observations.json` | Extracted observations and the baseline identifier used for incremental merges |
 | `references/` | Always includes observations and statistics (`profile.md`) and quote sources (`quotes.md`); the size budget controls monthly transcripts (`transcript/`), topic files (`topics.md`), claim evidence (`evidence.md`) and the redacted raw export (`source/`) |
 | `<name>.zip` | All of the above, packed. Upload it in the device console, set it as the main skill, and it takes effect on the next wake-up |
 
@@ -50,12 +61,17 @@ The directory looks like this, and every layer has its own job:
 <out>/<name>/references/scenarios.json         situation routing and real exchanges
 <out>/<name>/references/memory-ledger.json     memory dates, status, evidence and confidence
 <out>/<name>/references/evaluation.json        situation regression cases
+<out>/<name>/references/specificity.json       trait specificity scores
+<out>/<name>/references/coverage.json          situation coverage matrix
+<out>/<name>/references/message-index.json     indexed messages (may be a subset)
+<out>/<name>/references/questions.json         uncertain observations to confirm
+<out>/<name>/references/observations.json      observations and incremental baseline identifier
 <out>/<name>/references/transcript/YYYY-MM.md  every message, by month (redacted by default)
 <out>/<name>/references/topics.md              quotes regrouped by topic
 <out>/<name>/references/evidence.md            claim ← original line, for every claim
 <out>/<name>/references/source/                redacted copy of the raw export (--no-source to skip)
 <out>/<name>.zip                               all of the above; usually 1–3 MB
-<out>/.kith/<name>/                            local feedback, snapshots and review reports; excluded from ZIP
+<out>/.kith/<name>/                            local feedback, snapshots, baselines and review reports; excluded from ZIP
 ```
 
 The persona documents are only a dozen KB — those are distilled conclusions; "on which day, and what exactly was said" comes from searching `references/`. Entries that fail verification carry `（未在记录中找到依据）`; parts that came from a fallback or a fill-in are stated at the top of `SKILL.md` (for example "LLM 蒸馏 + 本地抽取式蒸馏补齐").
@@ -64,7 +80,7 @@ The main instructions describe the situation, the response and the wording, with
 
 Generation filters generic labels, topic words presented as verbal habits, exchanges paired across sessions or with the wrong speaker, and rules such as “never uses emoji” or “wait several minutes before replying”. Consecutive messages keep their individual boundaries. When all messages have timestamps, verbal habits must repeat across sessions. **Quote verification checks sources; it cannot prove the interpretation is sound or that try-chat sounds like the person.** Review the original context and try the persona yourself.
 
-## Six improvements
+## Workbench capabilities
 
 | Capability | How to use it |
 | --- | --- |
@@ -74,10 +90,18 @@ Generation filters generic labels, topic words presented as verbal habits, excha
 | Dated memory with status | Inspect chat observation dates, quotes and status in “关系记忆”. Plans, promises and jokes do not automatically become current facts; fulfillment needs confirmation. |
 | Version comparison and rollback | Each generation saves a snapshot. Use “版本” to compare changes, save manual edits and rebuild the ZIP, or roll back. Rollback first saves current content and preserves custom files and local feedback. |
 | Privacy review before sharing | “隐私检查” scans identifiers, email, locations, private references and binary files requiring manual inspection. Confirm items individually; confirmations expire when the content changes. |
+| Specificity scoring | “证据质量” shows each trait's quote count, sessions, distinctive terms and generalization risk. The heuristic score measures evidence density and needs human interpretation. |
+| Situation coverage matrix | The same panel distinguishes supported situations, observations from only one session and inputs without a usable reply. Open the supporting messages for each situation. |
+| Source navigation | Use “查看原话” on traits, exchanges and memories to open the message index with nearby context, search and pagination. |
+| Incremental updates | Upload a full export or enter new messages in “补标与更新”, preview duplicates and possible conflicts, then merge additions. Versions and the complete local baseline are retained; conflicting memories remain uncertain. |
+| Model A/B comparisons | Compare two models or recipes on the same regression cases. Save replies, timing, static checks and human choices locally. Configurations persist; API keys are used only for the current request. |
+| Questions for uncertain observations | Confirm or reject uncertain traits, situations and memories. Confirmation requires a scope or current status. Answers are human annotations, never original chat evidence, and expire after content changes. |
 
 Regression reports also follow the skill content: a manual edit or rollback to different content invalidates the old report. **Passing static checks means only that these rules found no issue; it does not prove likeness.** Model regression sends the persona and cases to your configured endpoint; static checks stay offline.
 
 Feedback, generated evaluation replies, privacy confirmations and version snapshots live in `<out>/.kith/<name>/` and survive server restarts. Raw feedback and review reports stay out of the ZIP. Generation adds applicable feedback as response corrections to `SKILL.md`; notes are preferences, never new chat facts or original evidence. Version management covers files owned by the generator, preserving custom files in the directory.
+
+Conflict detection uses shared wording and negation signals, so possible conflicts need review of the actual context and dates. An unrelated incremental update does not restore a conflicting memory to a fact. Scoped annotations guide local try-chat rather than rewriting the packaged memory status.
 
 ## The six-step pipeline, checkable at every step
 
@@ -135,7 +159,7 @@ python -m src.web            # defaults to http://127.0.0.1:8765/ and opens a br
 python -m src.web --port 9000 --no-open
 ```
 
-The left column contains input, settings, run and an existing-skill picker. The right column has **ten tabs**: log / verification / SKILL.md / memory / try-chat / situation routing / regression / feedback / versions / privacy. The map below shows the basic generation flow; the new tabs are described under “Six improvements”.
+The left column contains input, settings, run and an existing-skill picker. The right column has **fourteen tabs**: log / verification / SKILL.md / memory / try-chat / situation routing / regression / feedback / versions / privacy / evidence quality / message index / annotations and updates / A/B comparisons. The map below shows the basic generation flow; the additional panels are described under “Workbench capabilities”.
 
 <p align="center">
 <img src="assets/readme/workbench-map.svg" width="100%" alt="Map of the workbench: the left column has the input, settings and run cards; the right column has the log, verification, SKILL.md, memory and try-chat tabs with what to look at in each">
@@ -149,7 +173,7 @@ The left column contains input, settings, run and an existing-skill picker. The 
 > The screenshot below is the synthetic sample that ships with this repository, `samples/demo-chat.json` (123 messages, 潘小雨 / 小蒯), dropped straight in.
 
 <p align="center">
-<img src="docs/images/tutorial-a2-diagnose.png" width="880" alt="Parsing diagnosis: parser, message count, time span and candidate list">
+<img src="docs/images/en/tutorial-a2-diagnose.png" width="880" alt="Parsing diagnosis: parser, message count, time span and candidate list">
 </p>
 
 Build a habit around two numbers: **how many messages carry a timestamp** (the generic parser can produce a thousand messages with not a single timestamp, and every time-based statistic downstream is then void) and **the speaker count**. If the counts look wrong, switch files first, or re-save as UTF-8 and drop it again.
@@ -157,18 +181,20 @@ Build a habit around two numbers: **how many messages carry a timestamp** (the g
 **A2 · Fill in the settings.** Skill name (ASCII; it determines the directory and zip name), who am I, who to distil — all pickable from candidates or typed in; the distillation mode is either `本地抽取` (offline) or `LLM 蒸馏` (the latter reveals endpoint, model and API key). Optional: extra description, relationship type, strict mode, distil both sides, public use.
 
 <p align="center">
-<img src="docs/images/tutorial-a3-config.png" width="880" alt="Settings card: skill name, who am I, who to distil, relationship type, distillation mode">
+<img src="docs/images/en/tutorial-a3-config.png" width="880" alt="Settings card: skill name, who am I, who to distil, relationship type, distillation mode">
 </p>
 
 **A3 · Click "Start distillation" and read the log.** The right column streams those `[N/6]` steps live — the same six headings shown above — and the offline pass finishes in seconds.
 
 <p align="center">
-<img src="docs/images/tutorial-a4-log.png" width="880" alt="Run log: the six-step pipeline streams live, with pack size and next steps at the end">
+<img src="docs/images/en/tutorial-a4-log.png" width="880" alt="Run log: the six-step pipeline streams live, with pack size and next steps at the end">
 </p>
 
 With LLM distillation step 4 gets slow, but it reports three things: how many batches and calls in total, which one is running now, and how long each call actually took. Seeing `改用本地抽取式蒸馏` means that LLM stage failed and offline extraction already filled in — **the pack is still complete**, and you can re-run once the endpoint recovers.
 
 **A4 · Review, download and upload.** Review situations, regression cases and privacy in the new tabs. After manual edits, use “保存修改并重新打包” under versions to rebuild the archive. Download `<skill-name>.zip` from the "run" card → upload it in the device console (board → Settings → Assistant, scan the QR code, or open `http://<DEVICE_IP>:8080`) → set it as the main skill in the skill list.
+
+To add chat to an existing skill, open “补标与更新”, upload an export or enter new messages, preview duplicates and conflicts, then merge the previewed additions. For A/B comparisons, enter both models and recipes, save a new comparison, then fill in the current API keys and run the shared cases before choosing the replies you prefer.
 
 ### Route B: the command line
 
@@ -195,7 +221,49 @@ To use CLI output in the complete workbench, generate with `--out ./out`, then r
 Try-chat reads the **artifacts on disk**: edit `out/<name>/SKILL.md` or `references/memory.md` by hand and refresh the page — no re-distillation needed. It never modifies the artifacts either.
 
 <p align="center">
-<img src="docs/images/tutorial-a5-play.png" width="880" alt="Try-chat tab: talking to the persona built from the artifacts just generated; the header shows how many files and sample exchanges are in play">
+<img src="docs/images/en/tutorial-a5-play.png" width="880" alt="Try-chat tab: talking to the persona built from the artifacts just generated; the header shows how many files and sample exchanges are in play">
+</p>
+
+### Review and update after generation
+
+Follow these steps to check the generated observations. The pictured replies demonstrate the workflow and do not measure real model performance. The [bilingual screenshot index](docs/images/README.md) also includes the homepage and tall verification and SKILL.md previews.
+
+**1 · Review the response, then open its source.** Under “情境路由” (Situations), compare the trigger, incoming messages and target replies. Click “查看原话” (Open source) to highlight the cited messages in the index alongside their context.
+
+<p align="center">
+<img src="docs/images/en/scenarios.png" width="880" alt="Situations: original inputs, consecutive replies and source buttons">
+</p>
+
+<p align="center">
+<img src="docs/images/en/messages.png" width="880" alt="Source navigation: highlighted thanks and reply, with neighboring messages retained">
+</p>
+
+**2 · Check specificity and coverage.** “证据质量” (Evidence) shows each trait's score, quote count, session count, distinctive terms and generalization risk. Scroll down to the situation coverage matrix. Scores are not personality accuracy; situations with insufficient evidence need more real exchanges.
+
+<p align="center">
+<img src="docs/images/en/evidence.png" width="880" alt="Trait specificity: scores, generalization risk, quote and session counts, distinctive terms and sources">
+</p>
+
+<p align="center">
+<img src="docs/images/en/coverage.png" width="880" alt="Situation coverage matrix: coverage status and input, session and example counts">
+</p>
+
+**3 · Limit weak observations to a stated scope.** In “补标与更新” (Annotate & update), describe the applicable scope or current status, then click “已确认” (Confirmed); reject observations you disagree with. The screenshot confirms everyday reminders while requiring a separate check for important tasks.
+
+<p align="center">
+<img src="docs/images/en/updates.png" width="880" alt="Annotations: scope supplied and confirmed for everyday reminders; other observations remain pending">
+</p>
+
+**4 · Preview new chat before merging.** Scroll to “加入新聊天” (Add new chat), upload records and click “预览新增与冲突” (Preview additions and conflicts). Here, three inputs contain one duplicate and two new messages; a new message cancels an old arrangement, prompting conflict review. Merge only after reviewing; this capture stops at preview.
+
+<p align="center">
+<img src="docs/images/en/incremental.png" width="880" alt="Incremental preview: two additions, one duplicate and possible conflicts with an old promise">
+</p>
+
+**5 · Compare replies on shared cases.** Save both endpoints, models and recipes in “A/B 对比” (A/B compare), then enter keys for the current run and run the cases. Both sides have returned replies in the screenshot, with A chosen for the first case. Static checks assist review; judge the wording yourself.
+
+<p align="center">
+<img src="docs/images/en/ab.png" width="880" alt="A/B results: two replies to the same input, static issue notices and the selected A reply">
 </p>
 
 ### Does not sound like them: three fixes
@@ -346,7 +414,8 @@ A deliberate boundary: **this checks whether a quotation is genuine, not whether
 ## Development and validation
 
 ```bash
-python3 -m py_compile ex_distill.py
+python3 -m compileall -q src tests
+python3 -m unittest discover -s tests -v
 python3 ex_distill.py --help
 
 python3 ex_distill.py --input /path/to/chat.json --me 'your nickname' \
@@ -354,9 +423,19 @@ python3 ex_distill.py --input /path/to/chat.json --me 'your nickname' \
 unzip -l ./dist-smoke/smoke-test.zip
 
 python3 -m src.web --no-open     # workbench self-check: http://127.0.0.1:8765/
+python3 tests/smoke.py           # process startup, generation, chat, feedback, privacy, ZIP and cleanup
 ```
 
-Run `python -m compileall -q src tests` and `python -m unittest discover -s tests -v`. The suite covers conversation boundaries, grounded traits, routing, memory status, feedback, stale reports, privacy scanning, rollback, failed-write recovery and local HTTP endpoints. Model calls use local substitutes and need no real key. For browser validation, install Playwright and run `python tests/browser_workbench.py` (add `--browser-channel msedge` for installed Edge). It uses synthetic data, local model substitutes and temporary output.
+The suite covers conversation boundaries, grounded traits, specificity scoring, situation coverage, message navigation, scoped annotations, incremental deduplication and conflicts, A/B results, memory status, feedback, stale reports, privacy scanning, rollback, failed-write recovery and local HTTP endpoints. Model calls use local substitutes and need no real key. `tests/smoke.py` starts the actual workbench entry point in a separate process and checks an exit code of 0 and removal of the upload directory. For browser validation, install Playwright and run `python tests/browser_workbench.py` (add `--browser-channel msedge` for installed Edge). It checks fourteen tab groups and mobile layouts with synthetic data, local model substitutes and temporary output.
+
+To regenerate tutorial screenshots (Playwright is needed only for development; this command uses installed Edge):
+
+```powershell
+python -m pip install playwright
+python tests/capture_tutorials.py --browser-channel msedge
+```
+
+The script captures 14 images per language in a temporary workbench, checks dimensions, browser errors and cleanup, then replaces `docs/images/` and `docs/images/en/`. English controls, notices and logs are translated only during capture; the application and original chat remain Chinese. See the [image index](docs/images/README.md) for dimensions and demonstration details.
 
 ### Workbench API
 
@@ -366,6 +445,10 @@ All routes start with `/api/workbench/<skill-name>/`. The skill must be under `o
 | --- | --- | --- |
 | `package` / `download` | GET | Preview documents / download the current ZIP |
 | `scenarios` / `memory` | GET | Situation routing / memory ledger |
+| `specificity` / `coverage` / `messages` | GET | Specificity scores / situation coverage / indexed messages |
+| `questions` | GET / POST | Read questions / submit `question`, `status`, `answer` and `fingerprint` |
+| `incremental` | GET / POST | Read baseline / `mode=preview` for duplicates and conflicts / `mode=apply` to merge additions |
+| `ab` | GET / POST | Read history / `mode=start` to save a comparison / `mode=run` for one side of a case / `mode=choose` for human preference |
 | `evaluation` | GET / POST | Read report / submit `replies` (case ID → reply) and `fingerprint` for static checks |
 | `evaluate-model` | POST | Submit one `case`, `fingerprint` and endpoint settings to run and save one model reply |
 | `feedback` | GET / POST | Read summary / submit `user`, `reply`, `label` and optional `note` |
@@ -373,7 +456,9 @@ All routes start with `/api/workbench/<skill-name>/`. The skill must be under `o
 | `snapshot` / `rollback` | POST | Save edits and rebuild / submit `version` to restore |
 | `privacy` | GET / POST | Scan / submit `item`, `confirmed` and `fingerprint` to record a decision |
 
-Legacy skills without the new reference files show empty states and remain available for preview and try-chat. Regenerate to add routing, the memory ledger and regression cases. Local `.kith/` data may include original trial messages and historical personal information; it is excluded from the ZIP but should be reviewed when sharing an entire output directory. Privacy confirmation records a decision to keep an item; it does not redact or remove it.
+Legacy skills without the new reference files show empty states and remain available for preview and try-chat. Regenerate once to add the reference files and incremental baseline. Even with `--corpus-mb 0`, the complete baseline remains in `.kith/<skill-name>/baselines/`, redacted according to generation settings; the package contains only messages used as evidence. Incremental merges preserve custom files, duplicates create no new version, and possible conflicts create questions for review.
+
+Local `.kith/` data may include original trial messages and historical personal information; it is excluded from the ZIP but should be reviewed when sharing an entire output directory. Privacy confirmation records a decision to keep an item; it does not redact or remove it.
 
 ## Contributing
 

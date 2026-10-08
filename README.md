@@ -33,6 +33,11 @@
 | `references/scenarios.json` | 情境、触发信号、回应动作、相邻的真实接话和观察强度 |
 | `references/memory-ledger.json` | 带日期、证据和状态的记忆账本：事实 / 计划 / 承诺 / 提及 / 玩笑 / 不确定 |
 | `references/evaluation.json` | 从情境示例生成的回归用例；原聊天回复作为参考 |
+| `references/specificity.json` | 人物特点的具体性评分：原话数、会话数、独特词和泛化风险 |
+| `references/coverage.json` | 情境覆盖矩阵：已覆盖、证据不足和缺失接法 |
+| `references/message-index.json` | 可搜索的逐条原话索引；界面中的出处按钮直接跳到这里 |
+| `references/questions.json` | 低置信度观察的主动补标问题；答案只保存在本机状态 |
+| `references/observations.json` | 提炼的观察与增量合并使用的本地基线标识 |
 | `references/` | 始终保留统计画像 `profile.md` 和原话出处 `quotes.md`；另按体积预算附逐月原记录 `transcript/`、主题档案 `topics.md`、结论依据 `evidence.md`、原始导出脱敏副本 `source/` |
 | `<name>.zip` | 以上打包体。传进设备控制台、设为「主技能」，之后唤醒即生效 |
 
@@ -50,12 +55,17 @@
 <out>/<name>/references/scenarios.json         情境路由与真实接话示例
 <out>/<name>/references/memory-ledger.json     记忆日期、状态、证据和置信度
 <out>/<name>/references/evaluation.json        情境回归用例
+<out>/<name>/references/specificity.json       人物特点的具体性评分
+<out>/<name>/references/coverage.json          情境覆盖矩阵
+<out>/<name>/references/message-index.json     可定位的逐条原话（按体积预算可能是子集）
+<out>/<name>/references/questions.json         待确认的低置信度观察
+<out>/<name>/references/observations.json      观察记录与增量基线标识
 <out>/<name>/references/transcript/YYYY-MM.md  逐月逐条原记录（默认已脱敏）
 <out>/<name>/references/topics.md              按主题重组的原话档案
 <out>/<name>/references/evidence.md            每条结论 ← 原话 的对照表
 <out>/<name>/references/source/                原始导出的脱敏副本（--no-source 可关）
 <out>/<name>.zip                               以上打包，通常 1~3 MB
-<out>/.kith/<name>/                            本地反馈、版本快照和检查报告，不进 ZIP
+<out>/.kith/<name>/                            本地反馈、版本快照、增量基线和检查报告，不进 ZIP
 ```
 
 人设文档只有十几 KB——那是提炼过的结论；「哪天说的、原话是什么」靠检索 `references/`。校验不过的条目会标注 `（未在记录中找到依据）`；由回退或补齐得到的部分会写在 `SKILL.md` 顶部（例如「LLM 蒸馏 + 本地抽取式蒸馏补齐」）。
@@ -64,7 +74,7 @@
 
 生成时会筛掉泛化标签、话题词冒充的口头禅、跨会话或说话人错误的接话配对，以及「从不使用表情」「隔几分钟再回」这类不适合作为指令的规则。连发消息逐条保留；口头禅在有完整时间戳时还要跨会话重复。**引用核验只确认出处，不能证明人物概括在语义上成立或试聊已经像本人**，仍需结合原文和试聊判断。
 
-## 六项改进能力
+## 工作台能力
 
 | 能力 | 怎么用 |
 | --- | --- |
@@ -74,10 +84,18 @@
 | 带日期和状态的记忆 | 在「关系记忆」查看聊天提及日期、原话和状态；计划、承诺、玩笑不自动当作当前事实，是否兑现需要确认。 |
 | 版本比较与回滚 | 每次生成保存快照；在「版本」查看差异、保存手改内容并重新打包、回滚历史版本。回滚前保存当前内容，并保留自定义文件与本地反馈。 |
 | 发布前隐私检查 | 在「隐私检查」扫描手机号、邮箱、身份证/卡号、地点、私密指代和无法自动扫描的二进制文件；逐条确认保留，内容变化后确认自动失效。 |
+| 具体性评分 | 在「证据质量」查看每条人物特点的原话数、跨会话数、独特词和泛化风险；分数只表示证据密度，不替代人工判断。 |
+| 情境覆盖矩阵 | 同一页显示哪些真实场景已有接法、哪些只有一次观察或缺失回复；每个场景都能打开相关原话。 |
+| 原话跳转 | 从人物特点、情境示例和记忆的「查看原话」进入带相邻上下文的逐条索引，可搜索和分页。 |
+| 增量更新 | 在「补标与更新」上传完整记录或填新增消息，先预览去重和潜在冲突，再合并；旧版本、完整本地基线和冲突待确认记录都会保留。 |
+| 模型 A/B 对比 | 用同一组回归用例比较两套模型或配方，逐条保存耗时、静态检查和人工选择；配置可持久化，API Key 只用于当前调用。 |
+| 主动补标 | 对低置信度人物特点、情境和记忆提问，确认时必须填写适用范围；答案不冒充聊天原话，内容变化后自动失效。 |
 
 测评报告同样绑定技能内容：手改或回滚后，内容不同就失效。**静态检查通过只表示未命中这些规则，不能证明像本人**；模型测评会向你填写的接口发送人设和用例，离线检查不联网。
 
 反馈、测评回复、隐私确认和版本快照存在 `<out>/.kith/<name>/`，重启工作台后仍保留，原始反馈和检查结果不进入技能包。生成时会把适用的反馈整理成修正规则放入 `SKILL.md`；反馈备注只作为回应偏好，不作为聊天事实或原话证据。版本只管理生成器拥有的文件，自定义文件继续保留在目录中。
+
+冲突检测根据共用词和否定信号提示潜在变化，需要核对上下文与时间；后续加入无关聊天不会把冲突记忆恢复成事实。填写适用范围的补标用于本地试聊，不直接改写包内记忆状态。
 
 ## 六步流水线，每一步都能单独核对
 
@@ -135,7 +153,7 @@ python -m src.web            # 默认 http://127.0.0.1:8765/，自动打开浏�
 python -m src.web --port 9000 --no-open
 ```
 
-界面左栏是进料、配置、执行与已有技能选择器；右栏有**十个标签**：运行日志 / 校验 / SKILL.md / 关系记忆 / 试聊 / 情境路由 / 回归测评 / 试聊反馈 / 版本 / 隐私检查。下面的界面地图展示基础生成流程，新增能力见上面的「六项改进能力」。
+界面左栏是进料、配置、执行与已有技能选择器；右栏有**十四个标签**：运行日志 / 校验 / SKILL.md / 关系记忆 / 试聊 / 情境路由 / 证据质量 / 原话索引 / 补标与更新 / A/B 对比 / 回归测评 / 试聊反馈 / 版本 / 隐私检查。下面的界面地图展示基础生成流程，新增能力见上面的能力表。
 
 <p align="center">
 <img src="assets/readme/workbench-map.svg" width="100%" alt="工作台界面地图：左栏进料、配置、执行三张卡；右栏运行日志、校验、SKILL.md、关系记忆、试聊五个标签及各自要看的东西">
@@ -169,6 +187,50 @@ python -m src.web --port 9000 --no-open
 换成 LLM 后第 4 步变慢，但会报清三件事：总共几批几次请求、当前在第几批、每次实际用时。看到 `改用本地抽取式蒸馏` 说明 LLM 那一环失败、已自动用离线补齐——**产物照样完整**，接口恢复后重跑即可。
 
 **A4 · 验收、下载并上传。** 在新标签里检查场景、回归用例和隐私；手改后去「版本」点「保存修改并重新打包」。左栏「执行」下载 `<技能名>.zip` → 设备控制台（板子 → 设置 → 助手 扫码，或 `http://<设备IP>:8080`）上传 → 在技能列表里设为「主技能」。
+
+已有技能要加入新记录时，打开「补标与更新」，上传完整导出或填新增消息，点「预览新增与冲突」，核对后点「合并预览中的新增记录」。需要比较模型时，在「A/B 对比」填两侧模型和配方，先点「保存配置并新建对比」，再填写本次 Key 并运行同组用例，最后逐条选择更像本人的回复。
+
+### 生成后的核对与更新
+
+下面按实际操作顺序展示新功能。截图使用合成样例；试聊和 A/B 回复由本地模型替身提供，用于演示操作流程，不能据此判断真实模型表现。[完整中英截图索引](docs/images/README.md)还包含工作台首页、校验和 SKILL.md 长图。
+
+**1 · 看接法，再查出处。** 打开「情境路由」，核对触发条件、对方输入和本人回复。点击「查看原话」会跳到「原话索引」，高亮引用的消息，并保留前后文。
+
+<p align="center">
+<img src="docs/images/scenarios.png" width="880" alt="情境路由：真实输入、连续回复和查看原话按钮">
+</p>
+
+<p align="center">
+<img src="docs/images/messages.png" width="880" alt="原话跳转：感谢与回应的引用消息被高亮，前后聊天仍可核对">
+</p>
+
+**2 · 看具体性与覆盖。** 「证据质量」给每条人物特点显示分数、原话数、会话数、独特词和泛化风险；向下滚动查看情境覆盖矩阵。分数不是性格准确率，「证据不足」的场景需要更多真实接话。
+
+<p align="center">
+<img src="docs/images/evidence.png" width="880" alt="人物特点具体性：分数、泛化风险、原话数、会话数、独特词和出处">
+</p>
+
+<p align="center">
+<img src="docs/images/coverage.png" width="880" alt="情境覆盖矩阵：已覆盖或证据不足，以及输入、会话和示例数量">
+</p>
+
+**3 · 给薄弱观察限定范围。** 在「补标与更新」填写适用范围或当前情况，再点「已确认」；不认可的观察点「已否定」。图中只确认日常提醒的范围，重要事项仍需先核对要求。
+
+<p align="center">
+<img src="docs/images/updates.png" width="880" alt="主动补标：已填写日常提醒的适用范围并确认，其他观察仍待确认">
+</p>
+
+**4 · 加聊天前先预览。** 在同一页向下找到「加入新聊天」，上传记录并点「预览新增与冲突」。图中 3 条输入有 1 条重复、2 条新增，新原话取消旧约定，因此提示潜在冲突。核对后再点合并；这组截图只做预览。
+
+<p align="center">
+<img src="docs/images/incremental.png" width="880" alt="增量预览：新增 2 条、重复 1 条，旧承诺与新原话之间的潜在冲突">
+</p>
+
+**5 · 用同组用例选回复。** 在「A/B 对比」保存两侧接口、模型和配方，再填本次 Key，运行用例。图中两侧已返回回复，并在第一条选择了 A；静态检查只是辅助，仍需逐条判断语感。
+
+<p align="center">
+<img src="docs/images/ab.png" width="880" alt="A/B 对比结果：同一输入的两侧回复、静态问题提示和已选择的 A">
+</p>
 
 ### 路线 B：命令行
 
@@ -358,9 +420,19 @@ python3 ex_distill.py --input /path/to/chat.json --me '你的昵称' \
 unzip -l ./dist-smoke/smoke-test.zip
 
 python3 -m src.web --no-open     # 网页工作台自检：http://127.0.0.1:8765/
+python3 tests/smoke.py           # 独立进程冒烟：启动、生成、试聊、反馈、隐私、ZIP、清理和退出
 ```
 
-测试套件覆盖聊天边界与人物特点、情境路由、记忆状态、反馈闭环、报告失效、隐私扫描、版本回滚、打包失败恢复和本地 HTTP 接口；模型调用使用替身，不依赖真实 Key。浏览器验收可安装 Playwright 后运行 `python tests/browser_workbench.py`（有 Chromium 时直接运行，使用已安装的 Edge 时加 `--browser-channel msedge`）；该脚本只使用合成数据和本地模型替身，临时产物退出后清理。
+测试套件覆盖聊天边界与人物特点、具体性评分、情境覆盖、原话索引、主动补标、增量去重与冲突、A/B 结果、记忆状态、反馈闭环、报告失效、隐私扫描、版本回滚、打包失败恢复和本地 HTTP 接口；模型调用使用替身，不依赖真实 Key。`tests/smoke.py` 会启动真正的独立工作台进程，并断言退出码为 0、临时上传目录已删除。浏览器验收可安装 Playwright 后运行 `python tests/browser_workbench.py`（有 Chromium 时直接运行，使用已安装的 Edge 时加 `--browser-channel msedge`）；该脚本只使用合成数据和本地模型替身，临时产物退出后清理。
+
+重新生成教程截图（仅开发时需要 Playwright；下面使用已安装的 Edge）：
+
+```powershell
+python -m pip install playwright
+python tests/capture_tutorials.py --browser-channel msedge
+```
+
+脚本在临时工作台上生成中英各 14 张，完成尺寸和浏览器错误检查后才替换 `docs/images/` 与 `docs/images/en/`，结束时清理临时目录。英文版仅在截图时翻译控件、提示和日志，应用界面与聊天原话仍为中文。尺寸和演示数据说明见[截图索引](docs/images/README.md)。
 
 ### 工作台接口
 
@@ -370,6 +442,10 @@ python3 -m src.web --no-open     # 网页工作台自检：http://127.0.0.1:8765
 | --- | --- | --- |
 | `package` / `download` | GET | 预览文档 / 下载当前 ZIP |
 | `scenarios` / `memory` | GET | 情境路由 / 带状态记忆 |
+| `specificity` / `coverage` / `messages` | GET | 具体性评分 / 情境覆盖矩阵 / 逐条原话索引 |
+| `questions` | GET / POST | 获取待补标问题 / 提交 `question`、`status`、`answer` 和 `fingerprint` |
+| `incremental` | GET / POST | 查看基线 / 用 `mode=preview` 预览去重和冲突，或 `mode=apply` 合并新增记录 |
+| `ab` | GET / POST | 查看 A/B 历史；`mode=start` 建立对比、`mode=run` 运行单侧用例、`mode=choose` 保存人工选择 |
 | `evaluation` | GET / POST | 获取报告 / 提交 `replies`（用例 ID → 回复）和 `fingerprint` 做静态检查 |
 | `evaluate-model` | POST | 提交单个 `case`、`fingerprint` 和模型接口配置，运行并保存一个用例 |
 | `feedback` | GET / POST | 读取汇总 / 提交 `user`、`reply`、`label` 和可选 `note` |
@@ -377,7 +453,7 @@ python3 -m src.web --no-open     # 网页工作台自检：http://127.0.0.1:8765
 | `snapshot` / `rollback` | POST | 保存手改并打包 / 提交 `version` 回滚 |
 | `privacy` | GET / POST | 扫描 / 提交 `item`、`confirmed` 和 `fingerprint` 记录确认 |
 
-旧技能缺少新参考文件时显示空状态，仍可预览和试聊；重新生成即可补齐情境、记忆账本和回归集合。
+旧技能缺少新参考文件时显示空状态，仍可预览和试聊；重新生成即可补齐情境、记忆账本和回归集合。增量接口需要生成时保存的本地基线；`--corpus-mb 0` 仍会在 `.kith/<技能名>/baselines/` 保存完整的脱敏基线，包内只放被引用的原话索引。增量合并不会覆盖自定义文件，重复消息不产生新版本，潜在冲突会写成待补标问题。
 
 ## 贡献
 
