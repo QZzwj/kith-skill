@@ -13,3 +13,4 @@ __pycache__/
 zx/
 out/
 .codebuddy
+.ai-memory/*/

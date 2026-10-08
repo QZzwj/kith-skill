@@ -9,7 +9,7 @@ import uuid
 
 from .message_index import content_key, rows
 from .models import Msg
-from . import storage, versions, offline, quality, specificity, coverage, questions, scenarios, memory_ledger, evaluation, message_index
+from . import storage, versions, offline, quality, specificity, coverage, questions, scenarios, memory_ledger, evaluation, message_index, claims, quote_links
 from .analysis import analyse, sample_sessions
 from .privacy import redact
 
@@ -32,7 +32,8 @@ def to_messages(values) -> list[Msg]:
         if not isinstance(row, dict) or not str(row.get("speaker", "")).strip():
             continue
         result.append(Msg(_parse_time(row.get("time") or row.get("ts")),
-                          str(row["speaker"]), str(row.get("text", ""))))
+                          str(row["speaker"]), str(row.get("text", "")),
+                          str(row.get('source_id') or ''), str(row.get('reply_to') or '')))
     return result
 
 
@@ -64,7 +65,8 @@ def detect(existing: dict | None, incoming: list[Msg], ledger: list[dict] | None
         "added_count": len(added),
         "duplicate_count": len(incoming) - len(added),
         "messages": [{"time": msg.ts.isoformat() if msg.ts else None, "speaker": msg.speaker,
-                      "text": msg.text, "id": key(msg)} for msg in added],
+                      "text": msg.text, "id": key(msg), "source_id": msg.source_id,
+                      "reply_to": msg.reply_to} for msg in added],
         "conflicts": conflicts,
         "requires_review": bool(conflicts),
     }
@@ -88,7 +90,8 @@ def preview(root, incoming, fingerprint):
         raise ValueError('技能内容已变化，请刷新后重新预览')
     info, indexed = baseline(root)
     if info.get('redacted', True):
-        incoming = [Msg(m.ts, m.speaker, redact(m.text)) for m in incoming]
+        from dataclasses import replace
+        incoming = [replace(m, text=redact(m.text)) for m in incoming]
     ledger = storage.load(root / 'references/memory-ledger.json', {}).get('memories', [])
     return {**detect(indexed, incoming, ledger), 'fingerprint': fingerprint}
 
@@ -139,10 +142,15 @@ def apply(root, incoming, payload):
     persona, _ = quality.prepare_persona(persona, added, target, stats, relation=info['relation'])
     from . import verify
     persona, memory = verify.apply(persona, memory, verify.inspect(persona, memory, added), strict=True)
-    merged_persona, merged_memory = _merge(info['persona'], persona), _merge(info['memory'], memory)
+    merged_persona, merged_memory = _merge(info.get('raw_persona', info['persona']), persona), _merge(info['memory'], memory)
     # A high-risk claim is left in the review data rather than added as a
     # definitive instruction. New limited observations retain their wording.
-    full = to_messages(old_index['messages']) + added
+    full = quote_links.apply(root, to_messages(old_index['messages']) + added, redacted=False)
+    claim_data = claims.build(merged_persona, full, target)
+    old_cards = storage.load(root / 'references/claims.json', {'cards': []})['cards']
+    claim_data['cards'] = list({card['id']: card for card in [*old_cards, *claim_data['cards']]}.values())
+    raw_persona = merged_persona
+    merged_persona = claims.apply(root, merged_persona, target)
     scores = specificity.build(merged_persona, full, target)
     routes = scenarios.build_scenarios(full, target, counterpart)
     matrix = coverage.build(routes, full, target, counterpart)
@@ -174,13 +182,22 @@ def apply(root, incoming, payload):
                                               'question': f'旧记忆“{conflict["memory"]}”与新原话“{conflict["quote"]}”是否冲突？请确认适用时间。'})
     question_data['pending'] = len(question_data['questions'])
     new_id = uuid.uuid4().hex
-    new_info = {**info, 'persona': merged_persona, 'memory': merged_memory, 'baseline_id': new_id}
+    new_info = {**info, 'persona': merged_persona, 'raw_persona': raw_persona, 'memory': merged_memory, 'baseline_id': new_id}
     with storage.lock(root):
         if fingerprint != versions.fingerprint(root):
             raise ValueError('分析期间技能内容已变化，未合并；请重新预览')
         files = versions.current_files(root)
         skill = files.pop('SKILL.md').decode('utf-8')
         memory_md = files.pop('references/memory.md').decode('utf-8')
+        # Compile current review decisions into the exported character section,
+        # rather than only saving the filtered observation data.
+        character = ('## 人物特点\n\n' + '\n'.join('- ' + text for text in merged_persona.get('人物特点', [])) + '\n\n'
+                     if merged_persona.get('人物特点') else '')
+        if '## 人物特点\n' in skill:
+            skill = re.sub(r'^## 人物特点\n.*?(?=^## |\Z)', lambda _: character, skill,
+                           count=1, flags=re.MULTILINE | re.DOTALL)
+        elif character:
+            skill += '\n\n' + character
         new_traits = [item for item in scores['items'] if item['section'] in ('人物特点', '情境策略', '接话方式', '口头禅')
                       and item['text'] not in info['persona'].get(item['section'], [])
                       and item['generalization_risk'] != 'high']
@@ -205,6 +222,7 @@ def apply(root, incoming, payload):
             'observations': new_info, 'specificity': scores, 'coverage': matrix, 'message-index': indexed,
             'scenarios': scenarios.package_data(routes), 'memory-ledger': memory_ledger.package_data(ledger),
             'evaluation': {'schema_version': 1, 'cases': evaluation.build_cases(routes)}, 'questions': question_data,
+            'claims': claim_data,
         }
         files.update({'references/' + name + '.json': storage.dumps(value) for name, value in replacements.items()})
         # Keep the transcript reference layer up to date without re-analyzing it.

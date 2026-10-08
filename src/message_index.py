@@ -37,6 +37,8 @@ def build(msgs: list[Msg]) -> dict:
             "speaker": msg.speaker,
             "text": msg.text,
             "session": session + 1,
+            "source_id": msg.source_id,
+            "reply_to": msg.reply_to,
         })
     return {"schema_version": 1, "complete": True, "messages": rows}
 

@@ -17,7 +17,7 @@ GENERIC = ("您好", "不客气", "很高兴能帮助", "请问还有什么", "�
 
 
 def case_issue(case: dict, scenarios: list[dict] | None = None) -> str:
-    if case.get('origin') == 'feedback':
+    if case.get('origin') in ('feedback', 'holdout'):
         return ''
     incoming = str(case.get('prompt', ''))
     replies = case.get('allowed_quotes', [])
@@ -46,6 +46,7 @@ def build_cases(scenarios: list[dict], limit: int = 30) -> list[dict]:
                           "source": example.get("source", ""),
                           "incoming_messages": example.get("incoming_messages", []),
                           "reply_messages": example.get("reply_messages", [])}
+            case['pairing'] = example.get('pairing', 'adjacent')
             if not case_issue(case, scenarios):
                 cases.append(case)
     return cases[:limit]

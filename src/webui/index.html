@@ -161,6 +161,12 @@
       <div class="card__body">
         <button class="btn btn--go" id="run" disabled>
           <svg class="ico ico--lg" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.6 2.4l1.2 2.9 2.9 1.2-2.9 1.2-1.2 2.9-1.2-2.9L2.5 6.5l2.9-1.2z"/><path d="M12.2 9.6l.62 1.48 1.48.62-1.48.62-.62 1.48-.62-1.48L10.1 11.7l1.48-.62z"/></svg>开始蒸馏</button>
+        <button class="btn btn--ghost" id="run-stop" type="button" disabled>完成当前调用后停止</button>
+        <p class="play__hint" id="run-progress" role="status"></p>
+        <div class="check-row">
+          <label class="check"><input type="checkbox" id="f-holdout"><span>留出测评</span><em>20% 完整会话仅用于测试</em></label>
+          <label class="check"><input type="checkbox" id="f-resume" checked><span>复用成功批次</span></label>
+        </div>
         <div class="artifact" id="artifact" hidden>
           <a class="btn btn--ghost" id="download" href="#">下载技能包</a>
           <a class="btn btn--ghost" id="play" href="#" target="_blank" rel="noopener">打开试聊页</a>

@@ -8,6 +8,8 @@ class Msg:
     ts: datetime | None
     speaker: str
     text: str
+    source_id: str = ''
+    reply_to: str = ''
 
 
 @dataclass

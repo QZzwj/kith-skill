@@ -43,6 +43,7 @@ One web workbench, two commands, two routes. The left column builds the pack and
 | `references/coverage.json` | Situation coverage: covered, insufficient evidence or missing replies |
 | `references/message-index.json` | Searchable messages linked from trait, situation and memory evidence |
 | `references/questions.json` | Questions about uncertain observations; answers remain in local state |
+| `references/claims.json` | Trait review cards with supporting quotes, possible counterexamples and stable IDs; decisions remain local |
 | `references/observations.json` | Extracted observations and the baseline identifier used for incremental merges |
 | `references/` | Always includes observations and statistics (`profile.md`) and quote sources (`quotes.md`); the size budget controls monthly transcripts (`transcript/`), topic files (`topics.md`), claim evidence (`evidence.md`) and the redacted raw export (`source/`) |
 | `<name>.zip` | All of the above, packed. Upload it in the device console, set it as the main skill, and it takes effect on the next wake-up |
@@ -104,6 +105,22 @@ Regression cases retain source message numbers for reviewing the exchange and it
 Feedback, generated evaluation replies, privacy confirmations and version snapshots live in `<out>/.kith/<name>/` and survive server restarts. Raw feedback and review reports stay out of the ZIP. Generation adds applicable feedback as response corrections to `SKILL.md`; notes are preferences, never new chat facts or original evidence. Version management covers files owned by the generator, preserving custom files in the directory.
 
 Conflict detection uses shared wording and negation signals, so possible conflicts need review of the actual context and dates. An unrelated incremental update does not restore a conflicting memory to a fact. Scoped annotations guide local try-chat rather than rewriting the packaged memory status.
+
+### Context and quality tools
+
+| Capability | Operation and limits |
+| --- | --- |
+| Reply references and manual links | JSON retains `message_id` / `id` and `reply_to_message_id` / `reply_to` / `replyTo`; CSV supports `message_id` and `reply_to`. A reference must resolve uniquely to an earlier message. In the message index, expand the target speaker's reply, enter the counterpart's original message number, and save to rebuild situations and regression cases. Local links use message content identities and survive regeneration. |
+| Context-aware situations | Try-chat distinguishes stories, jokes, challenges and requests for comfort, carries context into short follow-ups, and leaves ambiguous inputs uncertain. Enabling model-based situation analysis sends the previous six turns and current input to your configured endpoint in an extra call. The decision must cite actual context; unverifiable output raises an error. Expand the reply's context/source details to inspect the decision. |
+| Trait review | The evidence panel shows supporting quotes and possible counterexamples. Keep or rewrite a claim with an explicit scope, reject it, or undo the decision. Counterexamples are lexical candidates for human review. Decisions constrain local try-chat immediately and survive regeneration; generation and incremental updates apply them to traits with explicit human confirmation/edit labels. Original quotes remain reference evidence. |
+| Held-out sessions | Enable holdout before generation to deterministically reserve about 20% of complete sessions; at least three sessions are required. Statistics, persona, memories and references use only training sessions, and source-export attachments are disabled. Test cases, answers and reports stay local. Select held-out sessions in regression evaluation. Tests exclude live feedback/annotations; content edits invalidate the set until regeneration. |
+| Relevant memory retrieval | Try-chat keeps the fixed persona and retrieves at most five historical memories/examples using the current input and recent context. Entries retain statuses such as plan or mention and show source message numbers. Retrieval uses offline lexical matching; unrelated queries do not force memory injection. Legacy packages without structured references retain their original loading behavior. |
+| Blind, multi-turn A/B | Select regression examples or a valid holdout set. Blind mode randomizes the two replies independently per case and reveals corresponding models after a vote. Add up to five fixed follow-up prompts; each model uses its own previous replies. Per-turn static results are saved; consistency and likeness still need human judgment. |
+| Resume and stop generation | The workbench enables reuse of successful batches by default. Checkpoints must match the input, model and recipe; failed batches retry. Stopping takes effect after the current call finishes, preserving successful batches. Upload the same record and run again to resume. Progress shows batches, reused/failed counts and token usage returned by the endpoint, or explicitly reports that usage is unavailable. |
+
+Reply links, review decisions, held-out answers and generation checkpoints live in `<out>/.kith/<name>/` as `reply-links.json`, `claim-decisions.json`, `holdout.json` and `generation-checkpoint.json`. They stay out of the ZIP. Review decisions match the speaker and quoted wording.
+
+CLI supports `--holdout-percent 20 --resume`. Holdout accepts 0–40; 0 disables it. Input/configuration changes recalculate the analysis. Checkpoints never store API keys.
 
 ## The six-step pipeline, checkable at every step
 
@@ -429,6 +446,8 @@ python3 tests/smoke.py           # process startup, generation, chat, feedback, 
 ```
 
 The suite covers conversation boundaries, grounded traits, specificity scoring, situation coverage, message navigation, scoped annotations, incremental deduplication and conflicts, A/B results, memory status, feedback, stale reports, privacy scanning, rollback, failed-write recovery and local HTTP endpoints. Model calls use local substitutes and need no real key. `tests/smoke.py` starts the actual workbench entry point in a separate process and checks an exit code of 0 and removal of the upload directory. For browser validation, install Playwright and run `python tests/browser_workbench.py` (add `--browser-channel msedge` for installed Edge). It checks fourteen tab groups and mobile layouts with synthetic data, local model substitutes and temporary output.
+
+Additional tests cover reply metadata/manual links, context evidence, isolation of held-out answers and old feedback, persistent trait reviews, retrieval budgets, blind-side mapping, independent follow-up histories and cancellation/resume. GitHub Actions runs unit and smoke tests on Windows/Linux with Python 3.10/3.13, plus Chromium acceptance and JavaScript syntax checks. CI uses synthetic records and local model substitutes, with no external model calls.
 
 To regenerate tutorial screenshots (Playwright is needed only for development; this command uses installed Edge):
 

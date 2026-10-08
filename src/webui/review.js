@@ -8,6 +8,8 @@ window.Review = (() => {
   let comparing = false, stopComparison = false, abSelected = '';
   let messageQuery = '', messagePage = 0, highlighted = [];
   let updatePreview = null, updateToken = '';
+  let evaluationPool = 'regression';
+  let abDraft = null;
   const sections = ['scenarios', 'evidence', 'messages', 'updates', 'ab', 'evaluation', 'feedback', 'versions', 'privacy', 'memory'];
   const statusLabels = {fact: '事实', plan: '计划', promise: '承诺', mentioned: '提及', joke: '玩笑', uncertain: '不确定'};
   const date = value => value ? new Date(value).toLocaleString('zh-CN') : '时间未知';
@@ -35,6 +37,8 @@ window.Review = (() => {
     cache = {};
     messageQuery = ''; messagePage = 0; highlighted = [];
     updatePreview = null; updateToken = ''; abSelected = '';
+    evaluationPool = 'regression';
+    abDraft = null;
     packageData = null;
     $('review-status').textContent = `正在加载 ${name}…`;
     sections.forEach(s => { $('view-' + s).innerHTML = empty('正在加载…'); });
@@ -76,8 +80,12 @@ window.Review = (() => {
     try {
       let data;
       if (section === 'evidence') {
-        const [specificity, coverage] = await Promise.all([api(endpoint('specificity')), api(endpoint('coverage'))]);
-        data = {specificity, coverage};
+        const [specificity, coverage, claims] = await Promise.all([api(endpoint('specificity')), api(endpoint('coverage')), api(endpoint('claims'))]);
+        data = {specificity, coverage, claims};
+      } else if (section === 'evaluation') {
+        const [evaluation, holdout] = await Promise.all([api(endpoint('evaluation')), api(endpoint('holdout'))]);
+        data = evaluation;
+        cache.holdout = holdout;
       } else if (section === 'updates') {
         const [questions, incremental] = await Promise.all([api(endpoint('questions')), api(endpoint('incremental'))]);
         data = {questions, incremental};
@@ -160,11 +168,26 @@ window.Review = (() => {
         badge(`泛化风险：${labels[t.generalization_risk] || '未知'}`, t.generalization_risk !== 'low') +
         `<p>原话 ${t.quote_count} 条 · 会话 ${t.session_count} 段</p><p>独特词：${esc(t.unique_words.join('、') || '无')}</p>` +
         sourceButton(t.evidence.map(e => e.message)) + '</section>').join('') || empty('还没有可评分的人物特点；旧技能请重新生成。')) +
+      renderClaims(data.claims) +
       '<h3>情境覆盖矩阵</h3><p>至少两段会话有可用接法才算已覆盖。出现过输入但没有可用接法，会标为缺失接法；未观察到或仅一次观察，保留为证据不足。</p>' +
       `<div class="coverage-grid">${matrix.map(r => `<section class="review-card"><h3>${esc(r.label)}</h3>` +
         badge(states[r.status], r.status !== 'covered') + `<p>输入 ${r.observed_inputs} 条 · 会话 ${r.sessions} 段 · 示例 ${r.examples} 个</p>` +
         `<p>${esc(r.response_move || '待补充真实接法')}</p>` + sourceButton(r.message_indices) + '</section>').join('')}</div>` +
       (!matrix.length ? empty('旧技能未附覆盖矩阵，请重新生成。') : '');
+  }
+
+  function renderClaims(data) {
+    const labels = {kept: '已保留', rewritten: '已改写', rejected: '已否定', pending: '待审阅'};
+    return '<h3>人物结论审阅</h3><p>逐条核对支持原话与候选反例。决定立即约束本地试聊，重新生成时应用到人设；人工修订会明确标记来源。决定跨重生成保留。</p>' +
+      (data?.cards || []).map(card => `<section class="review-card" data-claim-card="${esc(card.id)}"><h3>${esc(card.text)}</h3>` +
+        badge(labels[card.decision.status] || '待审阅') +
+        '<p>支持原话：</p>' + card.evidence.map(e => `<blockquote>${esc(e.quote)}</blockquote>`).join('') + sourceButton(card.evidence.map(e => e.message)) +
+        '<p>候选反例（仅有共用词和否定信号，须人工核对）：</p>' +
+        (card.counter_candidates.map(e => `<blockquote>${esc(e.quote)}</blockquote>`).join('') || '<p>未找到候选反例。</p>') + sourceButton(card.counter_candidates.map(e => e.message)) +
+        `<label>适用范围<input data-claim-scope value="${esc(card.decision.scope || '')}" placeholder="例如：熟人之间的玩笑；认真难过时不用"></label>` +
+        `<label>修订后的结论<textarea data-claim-replacement rows="2">${esc(card.decision.replacement || '')}</textarea></label>` +
+        '<div class="review-actions">' + Object.entries({kept: '保留', rewritten: '改写', rejected: '否定', pending: '撤销决定'}).map(([status, label]) =>
+          `<button class="review-button" data-claim="${esc(card.id)}" data-claim-status="${status}">${label}</button>`).join('') + '</div></section>').join('');
   }
 
   function renderMessages(data) {
@@ -190,7 +213,10 @@ window.Review = (() => {
       `<button class="review-button" data-message-page="1" ${messagePage + 1 >= pages ? 'disabled' : ''}>下一页</button>`;
     $('message-results').innerHTML = rows.slice(messagePage * 100, (messagePage + 1) * 100).map(m =>
       `<section class="review-card message-row${chosen.has(m.index) ? ' message-row--selected' : ''}" id="message-${m.index}" tabindex="-1">` +
-      `<h3>#${m.index} · ${esc(m.speaker)}</h3><small>${esc(m.time || '时间未知')} · 会话 ${m.session}</small><p>${esc(m.text)}</p></section>`).join('') || empty('没有匹配的原话。');
+      `<h3>#${m.index} · ${esc(m.speaker)}</h3><small>${esc(m.time || '时间未知')} · 会话 ${m.session}</small><p>${esc(m.text)}</p>` +
+      (m.reply_to ? '<p>引用对象：</p>' + sourceButton(all.filter(row => row.source_id === m.reply_to).map(row => row.index)) : '') +
+      (m.speaker === cache.messages.target ? `<details><summary>关联或修正引用对象</summary><label>对话方原消息编号<input type="number" min="1" max="${m.index - 1}" data-quote-source="${m.index}"></label>` +
+        `<button class="review-button" data-link-reply="${m.index}">保存关联并更新情境</button></details>` : '') + '</section>').join('') || empty('没有匹配的原话。');
   }
 
   async function jumpToMessages(value) {
@@ -234,13 +260,17 @@ window.Review = (() => {
     const runs = data.runs || [];
     const run = runs.find(r => r.id === abSelected) || runs[0];
     if (run) abSelected = run.id;
+    const configs = run?.blind && !run.revealed && abDraft ? abDraft : run?.configs;
     $('view-ab').innerHTML = '<h2>模型与配方 A/B 对比</h2><p>两侧使用同一份人设和同一组回归用例。比较静态问题、耗时和语感，最后逐条选你更认可的回复。配置与结果留在本地，Key 只用于当前请求。</p>' +
       '<div class="ab-grid">' + ['a', 'b'].map(side => `<section class="review-card"><h3>${side.toUpperCase()} 配置</h3>` +
-        `<label>接口地址<input id="ab-base-${side}" value="${esc(run?.configs[side].base_url || $('f-baseurl').value)}"></label>` +
-        `<label>模型<input id="ab-model-${side}" value="${esc(run?.configs[side].model || $('f-model').value)}"></label>` +
-        `<label>温度<input id="ab-temperature-${side}" type="number" min="0" max="2" step="0.1" value="${run?.configs[side].temperature ?? .7}"></label>` +
-        `<label>配方（附加回复指令）<textarea id="ab-recipe-${side}" rows="3">${esc(run?.configs[side].recipe || '')}</textarea></label>` +
+        `<label>接口地址<input id="ab-base-${side}" value="${esc(configs?.[side].base_url || $('f-baseurl').value)}"></label>` +
+        `<label>模型<input id="ab-model-${side}" value="${esc(configs?.[side].model || $('f-model').value)}"></label>` +
+        `<label>温度<input id="ab-temperature-${side}" type="number" min="0" max="2" step="0.1" value="${configs?.[side].temperature ?? .7}"></label>` +
+        `<label>配方（附加回复指令）<textarea id="ab-recipe-${side}" rows="3">${esc(configs?.[side].recipe || '')}</textarea></label>` +
         `<label>API Key<input id="ab-key-${side}" type="password" autocomplete="off"></label></section>`).join('') + '</div>' +
+      '<label class="check"><input id="ab-blind" type="checkbox"' + (run?.blind ? ' checked' : '') + '>盲评：每个用例随机左右排序，选择后揭晓模型</label>' +
+      '<label>用例来源<select id="ab-pool"><option value="regression">生成示范回归</option><option value="holdout">留出会话</option></select></label>' +
+      `<label>固定追问（每行一条，最多五条；各侧使用自己的回复历史）<textarea id="ab-followups" rows="3">${esc((run?.followups || []).join('\n'))}</textarea></label>` +
       `<div class="review-actions"><button class="review-button" id="ab-start" ${comparing ? 'disabled' : ''}>保存配置并新建对比</button>` +
       `<button class="review-button" id="ab-run" ${comparing || !run || run.stale ? 'disabled' : ''}>运行未完成的用例</button>` +
       `<button class="review-button" id="ab-stop" ${!comparing ? 'disabled' : ''}>完成当前调用后停止</button></div>` +
@@ -252,19 +282,21 @@ window.Review = (() => {
   }
 
   function renderAbResults(run) {
-    const labels = {a: 'A', b: 'B', tie: '相当', neither: '都不合适'};
+    const labels = {a: run.blind ? '位置 A' : 'A', b: run.blind ? '位置 B' : 'B', tie: '相当', neither: '都不合适'};
     const tally = Object.fromEntries(Object.keys(labels).map(key => [key, Object.values(run.choices).filter(c => c === key).length]));
     const results = Object.values(run.results).flatMap(pair => Object.entries(pair).map(([side, result]) => ({side, ...result})));
     $('ab-progress').textContent = `已完成 ${run.completed} / ${run.total * 2} 次回复`;
     $('ab-results').innerHTML = (run.stale ? '<p>' + badge('人设已变化，此对比失效；请新建对比', true) + '</p>' : '') +
       `<p>${Object.entries(tally).map(([key, count]) => badge(`${labels[key]} ${count}`)).join(' ')}</p>` +
+      (run.revealed ? '<p>揭晓后的模型统计：' + Object.values(run.summary || {}).map(s => `${esc(s.model)}：选择 ${s.wins} 次 · 未命中静态问题 ${s.passed} 次 · ${s.seconds} 秒`).join('；') + '</p>' : '') +
       '<p>' + ['a', 'b'].map(side => {
         const rows = results.filter(r => r.side === side);
-        return `${side.toUpperCase()}：${rows.filter(r => r.passed).length} / ${rows.length} 未命中静态问题，累计 ${rows.reduce((n, r) => n + (r.seconds || 0), 0).toFixed(1)} 秒`;
+        return `${run.blind ? '位置 ' : ''}${side.toUpperCase()}：${rows.filter(r => r.passed).length} / ${rows.length} 未命中静态问题，累计 ${rows.reduce((n, r) => n + (r.seconds || 0), 0).toFixed(1)} 秒`;
       }).join('；') + '</p>' + run.cases.map(c => {
         const pair = run.results[c.id] || {};
         return `<section class="review-card ab-case"><h3>${esc(c.scenario)}</h3><blockquote>输入：${esc(c.prompt)}</blockquote><p>期望接法：${esc(c.expected_move)}</p>` +
-          `<div class="ab-grid">${['a', 'b'].map(side => `<div><h4>${side.toUpperCase()} · ${esc(run.configs[side].model)}</h4><p class="ab-reply">${esc(pair[side]?.reply || '尚未运行')}</p>` +
+          `<div class="ab-grid">${['a', 'b'].map(side => `<div><h4>${side.toUpperCase()} · ${esc(run.revealed_models?.[c.id]?.[side] || run.configs[side].model)}</h4><p class="ab-reply">${esc(pair[side]?.reply || '尚未运行')}</p>` +
+            (pair[side]?.turns?.length > 1 ? '<details><summary>查看连续追问</summary>' + pair[side].turns.slice(1).map((t, i) => `<blockquote>${esc(t.prompt)}</blockquote><p>${esc(t.reply)}</p><small>${esc(pair[side].turn_checks?.[i + 1]?.reasons.join('；') || '未命中静态问题，需人工检查一致性')}</small>`).join('') + '</details>' : '') +
             (pair[side] ? `<small>${pair[side].seconds} 秒 · ${esc(pair[side].passed ? '未命中静态问题' : pair[side].reasons.join('；'))}</small>` : '') + '</div>').join('')}</div>` +
           `<div class="review-actions">${Object.keys(labels).map(choice => `<button class="review-button${run.choices[c.id] === choice ? ' is-chosen' : ''}" data-ab-case="${esc(c.id)}" data-ab-choice="${choice}" ${run.stale || !pair.a || !pair.b || comparing ? 'disabled' : ''}>${labels[choice]}</button>`).join('')}</div></section>`;
       }).join('');
@@ -292,7 +324,7 @@ window.Review = (() => {
           if (turn !== epoch || stopComparison) break;
           if (latest.results[c.id]?.[side]) continue;
           $('ab-progress').textContent = `${side.toUpperCase()} 正在回复：${c.scenario} · 已完成 ${latest.completed} 次`;
-          latest = await post('ab', {mode: 'run', run: run.id, case: c.id, side, api_key: keys[side]}, name);
+          latest = await post('ab', {mode: 'run', run: run.id, case: c.id, side, api_key: keys[side], api_key_a: keys.a, api_key_b: keys.b}, name);
           if (turn !== epoch) break;
           keepAbRun(latest); renderAbResults(latest);
         }
@@ -312,7 +344,11 @@ window.Review = (() => {
   }
 
   function renderEvaluation(data) {
+    const held = cache.holdout || {enabled: false};
+    if (evaluationPool === 'holdout') data = held;
     $('view-evaluation').innerHTML = '<h2>情境回归测评</h2><p>用真实输入检查新的回复；原聊天答案只作参考。静态检查会找空回复、客服话术和路由冲突，是否像本人需要你对照判断。</p>' +
+      '<label>用例来源<select id="eval-pool"><option value="regression"' + (evaluationPool === 'regression' ? ' selected' : '') + '>生成示范回归</option><option value="holdout"' + (evaluationPool === 'holdout' ? ' selected' : '') + '>留出会话（未参与生成）</option></select></label>' +
+      (evaluationPool === 'holdout' ? (held.enabled ? `<p>训练 ${held.train_sessions} 段 · 留出 ${held.test_sessions} 段 · 测试集 ${esc(held.test_id)}；答案仅供对照，不发送给生成模型。</p>` : '<p>请在生成配置中勾选「留出测评」，用完整原记录重新生成。</p>') : '') +
       (data.stale ? '<p>' + badge('内容已变化，旧报告失效', true) + '</p>' : '') +
       `<p id="eval-progress" role="status">${data.total} 个用例 · 已检查 ${data.checked} 个 · 未命中静态问题 ${data.passed} 个</p>` +
       ((data.excluded_cases || []).length ? '<section class="review-card">' +
@@ -332,14 +368,16 @@ window.Review = (() => {
         (c.note ? `<p>反馈备注：${esc(c.note)}</p>` : '') +
         `<label>待检查回复<textarea rows="3" data-reply="${esc(c.id)}" data-checked="${Boolean(c.checked)}" placeholder="填你试聊得到的回复">${esc(c.reply || '')}</textarea></label>` +
         `<p class="eval-result">${c.checked ? (c.passed ? '未命中静态问题，继续人工看语感' : esc(c.reasons.join('；'))) : '尚未运行'}</p></section>`).join('') || empty('这份技能未提供回归用例；重新生成，或在试聊中标注差评即可建立用例。'));
-    $('eval-static').disabled = $('eval-model').disabled = evaluating || !data.total;
+    $('eval-static').disabled = $('eval-model').disabled = evaluating || !data.total || (evaluationPool === 'holdout' && held.stale);
+    $('eval-pool').disabled = evaluating;
   }
 
   async function evaluate(live) {
     if (evaluating) return;
-    const name = selected, turn = epoch, data = cache.evaluation;
+    const name = selected, turn = epoch, held = evaluationPool === 'holdout', data = held ? cache.holdout : cache.evaluation;
     evaluating = true;
     $('eval-static').disabled = $('eval-model').disabled = true;
+    $('eval-pool').disabled = true;
     const config = {base_url: $('eval-base').value.trim(), model: $('eval-model-name').value.trim(), api_key: $('eval-key').value.trim()};
     let failure = '';
     try {
@@ -349,20 +387,20 @@ window.Review = (() => {
         document.querySelectorAll('[data-reply]').forEach(el => {
           if (el.value.trim() || el.dataset.checked === 'true') replies[el.dataset.reply] = el.value;
         });
-        report = await post('evaluation', {replies, fingerprint: data.fingerprint}, name);
+        report = await post(held ? 'holdout' : 'evaluation', {replies, fingerprint: data.fingerprint}, name);
       } else {
         for (let i = 0; i < data.results.length; i++) {
           if (epoch !== turn) break;
           $('eval-progress').textContent = `模型测评：${i + 1} / ${data.total}，等待回复…`;
-          const result = await post('evaluate-model', {case: data.results[i].id, fingerprint: data.fingerprint, ...config}, name);
+          const result = await post(held ? 'holdout-model' : 'evaluate-model', {case: data.results[i].id, fingerprint: data.fingerprint, ...config}, name);
           report = result.report;
           if (epoch !== turn) break;
-          cache.evaluation = report;
+          cache[held ? 'holdout' : 'evaluation'] = report;
           const textarea = Array.from(document.querySelectorAll('[data-reply]')).find(el => el.dataset.reply === result.case);
           if (textarea) textarea.value = result.reply;
         }
       }
-      if (turn === epoch && report) cache.evaluation = report;
+      if (turn === epoch && report) cache[held ? 'holdout' : 'evaluation'] = report;
     } catch (err) {
       if (turn === epoch) {
         failure = err.message + '；已完成的用例已保存在本地。';
@@ -370,9 +408,10 @@ window.Review = (() => {
     } finally {
       evaluating = false;
       if (turn === epoch) $('eval-static').disabled = $('eval-model').disabled = false;
+      if (turn === epoch) $('eval-pool').disabled = false;
     }
     if (turn === epoch) {
-      if (!failure || cache.evaluation !== data) renderEvaluation(cache.evaluation);
+      if (!failure || cache[held ? 'holdout' : 'evaluation'] !== data) renderEvaluation(cache.evaluation);
       if (failure) $('eval-progress').textContent = failure;
     }
   }
@@ -391,6 +430,21 @@ window.Review = (() => {
     const turn = epoch;
     try {
       if (button.id === 'eval-static' || button.id === 'eval-model') return evaluate(button.id === 'eval-model');
+      if (button.dataset.claim) {
+        const card = button.closest('[data-claim-card]');
+        const result = await post('claims', {claim: button.dataset.claim, status: button.dataset.claimStatus,
+          scope: card.querySelector('[data-claim-scope]').value, replacement: card.querySelector('[data-claim-replacement]').value,
+          fingerprint: cache.evidence.claims.fingerprint});
+        if (turn === epoch) { cache.evidence.claims = result; renderEvidence(cache.evidence); }
+        return;
+      }
+      if (button.dataset.linkReply) {
+        await post('quote-link', {reply: Number(button.dataset.linkReply),
+          source: Number(document.querySelector(`[data-quote-source="${button.dataset.linkReply}"]`).value),
+          fingerprint: cache.messages.fingerprint});
+        if (turn === epoch) await select(selected);
+        return;
+      }
       if (button.dataset.source) { await jumpToMessages(button.dataset.source); return; }
       if (button.dataset.messagePage) {
         messagePage = Math.max(0, messagePage + Number(button.dataset.messagePage));
@@ -440,8 +494,12 @@ window.Review = (() => {
       if (button.id === 'ab-start') {
         const config = side => ({model: $('ab-model-' + side).value.trim(), base_url: $('ab-base-' + side).value.trim(),
           temperature: Number($('ab-temperature-' + side).value), recipe: $('ab-recipe-' + side).value});
-        const run = await post('ab', {mode: 'start', fingerprint: cache.ab.fingerprint, a: config('a'), b: config('b')});
+        const draft = {a: config('a'), b: config('b')};
+        const run = await post('ab', {mode: 'start', fingerprint: cache.ab.fingerprint, ...draft,
+          blind: $('ab-blind').checked, pool: $('ab-pool').value,
+          followups: $('ab-followups').value.split('\n').map(s => s.trim()).filter(Boolean)});
         if (turn !== epoch) return;
+        abDraft = draft;
         cache.ab.runs = [run, ...(cache.ab.runs || []).filter(r => r.id !== run.id)]; abSelected = run.id; renderAb(cache.ab); return;
       }
       if (button.id === 'ab-run') { await compare(); return; }
@@ -497,6 +555,7 @@ window.Review = (() => {
     }
   });
   document.querySelector('.views').addEventListener('change', async ev => {
+    if (ev.target.id === 'eval-pool' && !evaluating) { evaluationPool = ev.target.value; renderEvaluation(cache.evaluation); }
     if (ev.target.id === 'ab-history' && !comparing) { abSelected = ev.target.value; renderAb(cache.ab); }
     if (ev.target.id !== 'incremental-file' || !ev.target.files?.[0]) return;
     const file = ev.target.files[0];

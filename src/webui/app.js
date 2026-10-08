@@ -192,6 +192,8 @@ $("run").addEventListener("click", async () => {
     both: $("f-both").checked,
     // 公开使用必须有两份画像（主技能扮演你、背景放对方），所以勾了它就把双方打开
     audience: $("f-public").checked ? "公开" : "本人",
+    holdout_percent: $('f-holdout').checked ? 20 : 0,
+    resume: $('f-resume').checked,
   };
   if (!offline) {
     payload.base_url = $("f-baseurl").value.trim();
@@ -206,6 +208,7 @@ $("run").addEventListener("click", async () => {
       body: JSON.stringify(payload),
     });
     state.jobId = job;
+    $('run-stop').disabled = false;
     poll();
   } catch (err) {
     $("log").innerHTML = `<span class="log-bad">${esc(err.message)}</span>`;
@@ -234,6 +237,10 @@ async function poll() {
     $("log").innerHTML = hasLog ? renderLog(snapshot.log) : "";
     syncRelation(snapshot.log);
     if (stick) view.scrollTop = view.scrollHeight;
+    const p = snapshot.progress || {}, u = p.usage || {};
+    $('run-progress').textContent = `批次 ${p.completed || 0} / ${p.total || 0} · 复用 ${p.reused || 0} · 失败 ${p.failed || 0}` +
+      (u.total_tokens != null ? ` · 本次接口用量 ${u.total_tokens} tokens` : ' · 接口未返回用量') +
+      (snapshot.cancel_requested && snapshot.state === 'running' ? ' · 等待当前调用完成后停止' : '');
   } catch (err) {
     showPaneError(err);
   }
@@ -244,12 +251,20 @@ async function poll() {
   }
 
   $("run").disabled = false;
+  $('run-stop').disabled = true;
   await finish(snapshot);
 }
 
+$('run-stop').addEventListener('click', async () => {
+  if (!state.jobId) return;
+  $('run-stop').disabled = true;
+  try { await api('/api/cancel/' + state.jobId, {method: 'POST'}); }
+  catch (err) { $('run-progress').textContent = err.message; $('run-stop').disabled = false; }
+});
+
 async function finish(snapshot) {
   const ok = snapshot.state === "done";
-  setState(ok ? "完成" : "有失败", ok ? "done" : "failed");
+  setState(ok ? "完成" : snapshot.state === 'cancelled' ? '已停止，可续跑' : "有失败", ok ? "done" : "failed");
 
   // 先把标签放出来，再去渲染内容。
   // 顺序反过来过：渲染任何一步抛异常，用户连"点开看看怎么了"都做不到——

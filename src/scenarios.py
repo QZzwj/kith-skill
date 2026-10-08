@@ -76,6 +76,7 @@ def build_scenarios(msgs: list[Msg], target: str, counterpart: str = "", limit: 
                 "source": f"session:{exchange.session + 1}",
                 "incoming_messages": exchange.incoming_messages,
                 "reply_messages": exchange.reply_messages,
+                "pairing": exchange.pairing,
             })
         result.append({
             "id": scenario_id(label),

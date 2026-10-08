@@ -20,6 +20,10 @@ def has_unresolved_reply(text: str) -> bool:
     return bool(_UNRESOLVED_REPLY.search(text))
 
 
+def reply_text(text: str) -> str:
+    return _UNRESOLVED_REPLY.sub('', text).strip()
+
+
 def pack_windows(corpus: str, limit: int, batches: int) -> tuple[list[str], int]:
     """装入完整窗口，计入分隔符；超长窗口不截断，也不拆成伪连续对话。"""
     if limit <= 0 or batches <= 0:
@@ -71,6 +75,7 @@ class Exchange:
     session: int
     incoming_messages: list[int] = field(default_factory=list)
     reply_messages: list[int] = field(default_factory=list)
+    pairing: str = 'adjacent'
 
     def render(self) -> str:
         return ("对方：" + "".join(f"「{x}」" for x in self.incoming)
@@ -81,7 +86,9 @@ def reply_exchanges(msgs: list[Msg], target: str, counterpart: str) -> list[Exch
     """只配对同一会话内相邻的完整发言；第三人或纯媒体发言不能被跨过去。"""
     out: list[Exchange] = []
     offset = 0
+    session_for = []
     for session_id, session in enumerate(split_sessions(msgs)):
+        session_for.extend([session_id] * len(session))
         runs: list[tuple[str, list[tuple[int, str]]]] = []
         for index, msg in enumerate(session, offset + 1):
             if runs and runs[-1][0] == msg.speaker:
@@ -92,7 +99,7 @@ def reply_exchanges(msgs: list[Msg], target: str, counterpart: str) -> list[Exch
         for (who, incoming), (speaker, reply) in zip(runs, runs[1:]):
             if who != counterpart or speaker != target:
                 continue
-            if any(has_unresolved_reply(text) for _, text in incoming + reply):
+            if any(msgs[i - 1].reply_to or has_unresolved_reply(text) for i, text in incoming + reply):
                 continue
             def text_only(lines):
                 return [(index, x.strip()) for index, x in lines if x.strip()
@@ -104,6 +111,32 @@ def reply_exchanges(msgs: list[Msg], target: str, counterpart: str) -> list[Exch
             if max(len("".join(left)), len("".join(right))) > 80:
                 continue
             out.append(Exchange(left, right, session_id, [i for i, _ in left_rows], [i for i, _ in right_rows]))
+    ids = defaultdict(list)
+    for index, msg in enumerate(msgs, 1):
+        if msg.source_id:
+            ids[msg.source_id].append(index)
+    for index, msg in enumerate(msgs, 1):
+        candidates = ids.get(msg.reply_to, []) if msg.reply_to else []
+        if msg.speaker != target or len(candidates) != 1 or candidates[0] >= index:
+            continue
+        source_index = candidates[0]
+        source = msgs[source_index - 1]
+        if source.speaker != counterpart or source.reply_to or has_unresolved_reply(source.text):
+            continue
+        left, right = [source.text], [reply_text(msg.text)]
+        reply_ids = [index]
+        for next_index in range(index + 1, len(msgs) + 1):
+            following = msgs[next_index - 1]
+            if following.speaker != target or following.reply_to or has_unresolved_reply(following.text):
+                break
+            if following.ts and msg.ts and (following.ts < msg.ts or following.ts - msg.ts > SESSION_GAP):
+                break
+            right.append(following.text)
+            reply_ids.append(next_index)
+        media = any(re.fullmatch(r'(?:\s*\[[^\[\]]*\]\s*)+', text) for text in left + right)
+        if len(right) <= 3 and not media and all(left + right) and max(len(''.join(left)), len(''.join(right))) <= 80:
+            out.append(Exchange(left, right, session_for[index - 1], [source_index], reply_ids, 'explicit_reference'))
+    out.sort(key=lambda exchange: exchange.reply_messages[0])
     return out
 
 

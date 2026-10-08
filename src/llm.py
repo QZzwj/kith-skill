@@ -378,6 +378,8 @@ def _llm_call_once(base_url: str, api_key: str, model: str, system: str, user: s
                            f"{_json_fault(exc, raw)}；{_preview(raw)}")
     if not isinstance(body, dict):
         raise RuntimeError(f"LLM 返回的不是 JSON 对象 from {url}：{_preview(str(body))}")
+    from .checkpoint import capture_usage
+    capture_usage(body.get('usage') or {})
     return _message_content(body, url, raw, max_tokens)
 
 
@@ -542,6 +544,14 @@ def consult_llm(corpus: str, target: str, args, stats: Stats,
           f"，合计 {len(pieces) * len(tasks)} 次请求"
           + (f"，完成后最多 {1 + bool(also)} 次人设整合" if len(pieces) > 1 else ""), file=sys.stderr)
 
+    from .checkpoint import Checkpoint, identity, check_cancel
+    saved = Checkpoint(args, identity({'corpus': corpus, 'target': target, 'also': also,
+        'tasks': [(label, system, context) for label, system, sink, context in tasks],
+        'model': args.model, 'base_url': args.base_url, 'budget': args.llm_chars,
+        'batches': args.llm_batches, 'max_tokens': getattr(args, 'max_tokens', 0),
+        'dry_run': args.dry_run_llm}),
+        len(pieces) * len(tasks) + (1 + bool(also) if len(pieces) > 1 else 0))
+
     def run_one(tag: str, label: str, system: str, text: str, depth: int = 0,
                 context: str = "") -> list[dict]:
         """跑一次调用并解析；上游没给内容 / 等超时时，把这一批对半拆开再试（只拆一层）。
@@ -550,6 +560,12 @@ def consult_llm(corpus: str, target: str, args, stats: Stats,
         让碎片更没有上下文。``extract_json`` 也放进 try —— 一段坏 JSON 不该把整轮
         LLM 结果一起带走（以前它会直接冒到调用方，成功的那半也一起作废）。
         """
+        check_cancel()
+        key = identity({'system': system, 'text': text, 'context': context})
+        cached = saved.cached(key)
+        if cached is not None:
+            print(f'      {label}复用已成功批次', file=sys.stderr)
+            return [cached]
         started = time.monotonic()
         try:
             user = (context + "\n\n【聊天片段 / 整合候选】\n" + text) if context else text
@@ -560,6 +576,7 @@ def consult_llm(corpus: str, target: str, args, stats: Stats,
             if not parsed and not args.dry_run_llm:
                 raise RuntimeError("没有返回可用的 JSON 条目")
         except (UpstreamUnavailable, LLMTimeoutError) as e:
+            saved.record(key, tag, error=e)
             halves = _halve(text) if depth == 0 else []
             if halves:
                 print(f"      {label}：{e}", file=sys.stderr)
@@ -574,9 +591,13 @@ def consult_llm(corpus: str, target: str, args, stats: Stats,
             print(f"      {label}失败：{e}", file=sys.stderr)
             return []
         except Exception as e:
+            saved.record(key, tag, error=e)
             failures.append(f"{tag}：{e}")
             print(f"      {label}失败：{e}", file=sys.stderr)
             return []
+        if not args.dry_run_llm:
+            saved.record(key, tag, result=parsed)
+        check_cancel()
         print(f"      {label}完成：用时 {time.monotonic() - started:.1f} 秒，"
               f"返回 {len(out)} 字符", file=sys.stderr)
         return [parsed]

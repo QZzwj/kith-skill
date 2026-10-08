@@ -5,10 +5,11 @@ import sys
 import uuid
 from collections import Counter
 from pathlib import Path
+from dataclasses import replace
 
 from . import (cite, corpus, offline, quality, relation, verify, scenarios,
                memory_ledger, evaluation, feedback, privacy_review, storage, versions)
-from . import specificity, coverage, message_index, questions
+from . import specificity, coverage, message_index, questions, claims, holdout, quote_links, checkpoint
 from .analysis import analyse, sample_sessions
 from .llm import consult_llm
 from .package import upload_to_device, write_package
@@ -85,6 +86,8 @@ def build_args(argv=None):
                         "references/ 下的聊天记录、主题档案、结论依据、参考文献表）："
                         "手机号 / 身份证 / 银行卡 / 邮箱 / 详细地址 → [标签]")
     p.add_argument("--device", help="可选：生成后直接上传，例如 192.168.137.103:8080")
+    p.add_argument('--holdout-percent', type=int, default=0, help='按完整会话留出测试集（0 到 40，0 关闭）；测试答案不进包')
+    p.add_argument('--resume', action='store_true', help='复用匹配输入及配方的成功模型批次')
     return p.parse_args(argv)
 
 
@@ -150,8 +153,23 @@ def main(argv=None) -> int:
     main_name = me_name if (both and audience == "公开") else target
     back_name = target if main_name == me_name else me_name
     skill_root = Path(args.out) / args.name
+    args.checkpoint_path = storage.local_dir(skill_root) / 'generation-checkpoint.json'
+    checkpoint.check_cancel()
+    msgs = quote_links.apply(skill_root, msgs, redacted=not args.no_redact)
+    try:
+        msgs, test_msgs, split_info = holdout.split(msgs, args.holdout_percent)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    if split_info.get('enabled'):
+        print(f'      留出 {split_info["test_sessions"]} 段会话；仅用 {split_info["train_sessions"]} 段生成，不附原始导出')
+    if not any(m.speaker == main_name for m in msgs):
+        print('训练会话中没有目标人物，请调整留出比例或补充会话', file=sys.stderr)
+        return 2
     previous = versions.current(skill_root).get('metadata', {})
     feedback_rows = feedback.read(skill_root) if previous.get('audience', audience) == audience else []
+    if test_msgs:
+        feedback_rows = holdout.training_feedback(feedback_rows, test_msgs)
     args.feedback_context = feedback.context(feedback_rows)
     if feedback_rows:
         print(f'      已载入 {len(feedback_rows)} 条试聊反馈：用于修正接法和回归测评，不作为聊天事实')
@@ -260,9 +278,10 @@ def main(argv=None) -> int:
                   f"接话方式 {len(back_persona.get('接话方式', []))} 条、"
                   f"典型例句 {len(back_persona.get('典型例句', []))} 条")
 
+    checkpoint.check_cancel()
     print("[5/6] 校验结论")
     # 模型看到的是脱敏片段；引用核验也使用相同文本，避免将标签误判为编造。
-    evidence_msgs = ([Msg(m.ts, m.speaker, redact(m.text)) for m in msgs]
+    evidence_msgs = ([replace(m, text=redact(m.text)) for m in msgs]
                      if not args.no_redact else msgs)
     if not args.no_redact:
         persona = {key: [redact(str(item)) for item in value] for key, value in persona.items()}
@@ -294,6 +313,9 @@ def main(argv=None) -> int:
             print(f"      {back_name} 的画像：")
             print(verify.format_report(back_findings))
 
+    claim_data = claims.build(persona, evidence_msgs, main_name)
+    raw_persona = persona
+    persona = claims.apply(skill_root, persona, main_name)
     display = args.display or main_name
     desc = args.desc
     if not desc and (fell_back or not use_llm):
@@ -313,6 +335,7 @@ def main(argv=None) -> int:
         back_persona, n3 = flag_deixis(back_persona)
         public_marks = n1 + n2 + n3
 
+    checkpoint.check_cancel()
     print("[6/6] 打包")
     # 脱敏（默认开，--no-redact 可关）：references 下放的是**聊天记录**，逐月记录、
     # 结论依据、主题档案、以及正文里的参考文献都是同一批原话，统一过一遍才叫脱敏。
@@ -329,7 +352,7 @@ def main(argv=None) -> int:
                         budget_mb=args.corpus_mb, redact=scrub, source=src,
                         # 原始导出默认附（脱敏副本）——它是"以后能换口径重新蒸馏"的兜底，
                         # 也是包体积的大头；公开版不给：那份包是要给别人读的。
-                        allow_source=(audience == "本人" and not args.no_source))
+                        allow_source=(audience == "本人" and not args.no_source and not test_msgs))
     if refs:
         months = len([rel for rel in refs if rel.startswith(corpus.TRANSCRIPT_DIR)])
         source_rel = next((rel for rel in refs if rel.startswith(corpus.SOURCE_DIR)), "")
@@ -417,20 +440,25 @@ def main(argv=None) -> int:
     storage.write(storage.local_dir(skill_root) / 'baselines' / (baseline_id + '.json'),
                   message_index.build(evidence_msgs))
     extra['references/observations.json'] = storage.dumps({
-        'schema_version': 1, 'baseline_id': baseline_id, 'persona': persona, 'memory': memory,
+        'schema_version': 1, 'baseline_id': baseline_id, 'persona': persona, 'raw_persona': raw_persona, 'memory': memory,
         'target': main_name, 'counterpart': back_name or offline._counterpart(stats_main, main_name) or '',
         'relation': relation_name, 'redacted': bool(scrub), 'corpus_enabled': args.corpus_mb > 0})
     extra['references/specificity.json'] = storage.dumps(scores)
     extra['references/coverage.json'] = storage.dumps(matrix)
     extra['references/message-index.json'] = storage.dumps(indexed)
     extra['references/questions.json'] = storage.dumps(questions.build(scores, matrix, ledger))
+    extra['references/claims.json'] = storage.dumps(claim_data)
     if both:
         extra[PROFILE_FILE[audience]] = profile_md
+    checkpoint.check_cancel()
     zip_path = write_package(Path(args.out), args.name, skill_md, memory_md,
                              extra=extra or None, metadata={'audience': audience,
                                  'engine': 'llm' if use_llm else 'offline',
                                  'relation': relation_name, 'redacted': bool(scrub)})
     privacy = privacy_review.review(skill_root)
+    holdout.save(skill_root, [replace(m, text=redact(m.text)) for m in test_msgs]
+                 if scrub else test_msgs, main_name,
+                 back_name or offline._counterpart(stats_main, main_name) or '', split_info)
     print(f'      情境路由 {len(routes)} 类 · 带状态记忆 {len(ledger)} 条 · 回归用例 {len(cases)} 条')
     print(f"      发布前隐私检查：{len(privacy['items'])} 条待确认；在 Web 工作台可逐条查看")
     packed = zip_path.stat().st_size

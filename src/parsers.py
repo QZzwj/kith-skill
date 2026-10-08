@@ -111,6 +111,8 @@ def parse_csv(path: Path) -> list[Msg]:
                                      "正文", "displaycontent", "msg"))
     # WeChatMsg 之类会给出 IsSender：1=本人，0=对方；比靠昵称判断可靠得多
     idx_sender = _pick_column(header, ("issender", "is_sender"))
+    idx_id = _pick_column(header, ('message_id', 'msgid', 'localid', '消息id'))
+    idx_reply = _pick_column(header, ('reply_to', 'replytomsgid', '引用id'))
     body = rows[1:] if idx_text is not None else rows
     if idx_text is None:                       # 无表头：按 时间, 昵称, 内容 猜
         idx_time, idx_who, idx_text = 0, 1, 2
@@ -137,7 +139,9 @@ def parse_csv(path: Path) -> list[Msg]:
             who = "我" if flag in ("1", "true", "yes") else (who or "对方")
         txt = str(row[idx_text]).strip() if idx_text is not None else ""
         if txt:
-            out.append(Msg(ts, who or "未知", txt))
+            out.append(Msg(ts, who or "未知", txt,
+                           str(row[idx_id]) if idx_id is not None and idx_id < len(row) else '',
+                           str(row[idx_reply]) if idx_reply is not None and idx_reply < len(row) else ''))
     return out
 
 
@@ -374,7 +378,7 @@ def parse_json_log(path: Path) -> list[Msg]:
 
         # QQChatExporter stores sender as an object. Prefer the display name
         # and fall back through the other human-readable identity fields.
-        who = (it.get("sender") or it.get("sender_name") or it.get("author")
+        who = (it.get("speaker") or it.get("sender") or it.get("sender_name") or it.get("author")
                or it.get("user") or it.get("talker") or it.get("name")
                or it.get("from") or it.get("actor") or "")
         if isinstance(who, dict):
@@ -395,7 +399,13 @@ def parse_json_log(path: Path) -> list[Msg]:
             elif wx_partner:
                 speaker = wx_partner
         if txt:
-            out.append(Msg(ts, speaker or "未知", txt))
+            identity = it.get('source_id', it.get('message_id', it.get('id', it.get('msgid', ''))))
+            quoted = it.get('reply_to_message_id', it.get('reply_to', it.get('replyTo', '')))
+            if isinstance(quoted, dict):
+                quoted = quoted.get('message_id', quoted.get('id', ''))
+            out.append(Msg(ts, speaker or "未知", txt,
+                           str(identity) if isinstance(identity, (str, int)) else '',
+                           str(quoted) if isinstance(quoted, (str, int)) else ''))
     return out
 
 
@@ -683,7 +693,8 @@ def load_messages(path: Path, channel: str | None = None,
     传入 ``trace`` 会收到实际接走这份文件的解析器名——路由过程原本是完全静默的，
     出了问题只能看到"没解析出任何消息"。
     """
-    return [Msg(m.ts, m.speaker, normalize_message_text(m.text))
+    from dataclasses import replace
+    return [replace(m, text=normalize_message_text(m.text))
             for m in _load_messages(path, channel, trace)]
 
 

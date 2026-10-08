@@ -236,11 +236,18 @@ async function ask() {
         api_key: $("f-apikey").value.trim(),
         // 口味参数：改档位下一条消息就生效，不用重启工作台
         temperature: $("f-temp").value,
+        semantic_model: $('f-semantic').checked,
       }),
     });
     thinking.remove();
     if (res.error) throw new Error(res.error);
     const response = bubble("ta", res.reply, res.seconds ? `${res.seconds} 秒` : "");
+    const trace = document.createElement('details');
+    trace.className = 'chat-feedback';
+    trace.innerHTML = '<summary>本次情境与资料来源</summary>' +
+      `<p>${esc(res.routing?.reason || '没有情境判断')}</p>` +
+      (res.retrieved || []).map(entry => `<p>${esc(entry.kind === 'memory' ? '记忆' : '示范')}：${esc(entry.text)} · ${esc(entry.messages.map(i => '#' + i).join('、'))}</p>`).join('');
+    response.appendChild(trace);
     addFeedback(response, input, res);
     history.push({ role: "assistant", content: res.reply });
     setState("TA 回了", "done");

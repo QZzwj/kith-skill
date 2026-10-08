@@ -38,7 +38,8 @@ from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote, urlparse
 
 from . import (cli, storage, versions, scenarios, evaluation, feedback, privacy_review,
-               specificity, coverage, message_index, questions, incremental, ab)
+               specificity, coverage, message_index, questions, incremental, ab,
+               quote_links, claims, holdout, retrieval, semantic, checkpoint)
 from .conversations import reply_exchanges, select_exchanges
 from .llm import CHAT_TEMPERATURE, llm_call, llm_chat
 from .models import Msg
@@ -64,9 +65,10 @@ _PASSTHROUGH = (
     ("me", "--me"), ("target", "--target"), ("display", "--display"), ("desc", "--desc"),
     ("relation", "--relation"), ("model", "--model"), ("base_url", "--base-url"),
     ("api_key", "--api-key"), ("device", "--device"), ("audience", "--audience"),
+    ('holdout_percent', '--holdout-percent'),
 )
 _SWITCHES = (("no_llm", "--no-llm"), ("strict", "--strict"), ("no_verify", "--no-verify"),
-             ("both", "--both"))
+             ("both", "--both"), ('resume', '--resume'))
 
 
 class Job:
@@ -80,6 +82,8 @@ class Job:
         self.log: list[str] = []
         self.state = "queued"          # queued | running | done | failed
         self.code: int | None = None
+        self.cancel_requested = False
+        self.progress = {'total': 0, 'completed': 0, 'failed': 0, 'reused': 0, 'usage': {}}
 
     def write(self, text: str) -> None:
         if not text:
@@ -96,7 +100,8 @@ class Job:
 
     def snapshot(self) -> dict:
         return {"id": self.id, "state": self.state, "code": self.code,
-                "log": self.text(), "name": self.name}
+                "log": self.text(), "name": self.name, 'progress': self.progress.copy(),
+                'cancel_requested': self.cancel_requested}
 
     def artifacts(self) -> dict:
         """产出文件的内容，供前端预览。"""
@@ -450,32 +455,44 @@ def _strip_report_noise(text: str) -> str:
     return "\n".join(out).strip()
 
 
-def _persona_prompt(target: Job | PlayTarget, text: str = "") -> str:
+def _persona_prompt(target: Job | PlayTarget, text: str = "", history=None, decision=None, retrieved=None,
+                    include_review=True) -> str:
     """把产物拼成陪聊用的那段 system。
 
-    试聊不做检索：整套塞进去（本地测试，几 KB）比模拟 skill_search 更接近"人设完整"。
-    顺序是「怎么说话 → 平时怎么接话（真实节选）→ 这次的规矩」——示范贴着指令放，
-    离"该你开口了"最近，模型才更可能照着那个腔调接。
+    固定人设配有限条相关记忆和示范；旧包没有结构化资料时保留原先的加载方式。
     """
     blocks = []
+    root = target.out_dir / target.name
+    indexed = (root / 'references/memory-ledger.json').is_file()
     for path in _persona_files(target):
+        if indexed and path.name == 'memory.md':
+            continue
         cleaned = _strip_report_noise(path.read_text(encoding="utf-8"))
+        if indexed and path.name == 'SKILL.md':
+            cleaned = re.sub(r'^## (?:情境路由表|接话方式[^\n]*|典型例句[^\n]*)\n.*?(?=^## |\Z)', '', cleaned,
+                             flags=re.MULTILINE | re.DOTALL)
         if cleaned:
             blocks.append(cleaned)
-    examples, _ = _play_examples(target)
-    if examples:
-        blocks.append(examples)
-    root = target.out_dir / target.name
+    if not indexed:
+        examples, _ = _play_examples(target)
+        if examples:
+            blocks.append(examples)
+    selected = retrieved if retrieved is not None else retrieval.select(root, text, history)
+    if selected:
+        blocks.append(retrieval.prompt(selected))
     routes = _routes(root)
-    current = scenarios.prompt(text, routes)
+    current = semantic.prompt(decision, routes) if decision else scenarios.prompt(text, routes)
     if current:
         blocks.append(current)
-    corrections = feedback.render_rules(feedback.read(root), routes, text=text)
+    corrections = feedback.render_rules(feedback.read(root), routes, text=text) if include_review else ''
     if corrections:
         blocks.append(corrections)
-    review_prompt = questions.prompt(root)
+    review_prompt = questions.prompt(root) if include_review else ''
     if review_prompt:
         blocks.append(review_prompt)
+    reviewed = claims.prompt(root) if include_review else ''
+    if reviewed:
+        blocks.append(reviewed)
     blocks.append('记忆里的日期只表示当时提及。历史计划与旧承诺的当前有效性需要确认；不推断已经兑现，也不重新许诺。')
     blocks.append(PLAY_HINT.format(name=_persona_title(target)))
     return "\n\n---\n\n".join(blocks)
@@ -610,13 +627,18 @@ def _run_job(job: Job) -> None:
     job.state = "running"
     writer = _Writer(job)
     try:
+        checkpoint.attach(job)
         with _RUN_LOCK, contextlib.redirect_stdout(writer), contextlib.redirect_stderr(writer):
             job.code = cli.main(job.argv)
+    except checkpoint.Cancelled as exc:
+        job.write('\n' + str(exc) + '\n')
+        job.code = 130
     except Exception as exc:  # 兜底：任何异常都要落到日志里，不能静默
         job.write(f"\n[web] 执行异常：{type(exc).__name__}: {exc}\n")
         job.code = 1
     finally:
-        job.state = "done" if job.code == 0 else "failed"
+        checkpoint.attach()
+        job.state = 'cancelled' if job.code == 130 else ('done' if job.code == 0 else 'failed')
 
 
 def _routes(root: Path) -> list[dict]:
@@ -634,8 +656,18 @@ def _reply(target: Job | PlayTarget, payload: dict, messages: list) -> dict:
     root = target.out_dir / target.name
     with storage.lock(root):
         state = versions.state(root)
-        system = _persona_prompt(target, turns[-1]['content'])
-        matched = scenarios.route(turns[-1]['content'], _routes(root)) or {}
+        routes = _routes(root)
+        selected = retrieval.select(root, turns[-1]['content'], turns[:-1])
+        decision = semantic.assess(turns[-1]['content'], routes, turns[:-1])
+    if payload.get('semantic_model'):
+        decision = semantic.model_assess(turns[-1]['content'], routes, turns[:-1],
+            lambda system, user: llm_call(str(payload.get('base_url') or _argv_value(target, '--base-url') or DEFAULT_BASE_URL), api_key,
+                str(payload.get('model') or _argv_value(target, '--model') or DEFAULT_MODEL), system, user, timeout=60, max_tokens=1000))
+    with storage.lock(root):
+        if versions.fingerprint(root) != state['fingerprint']:
+            raise ValueError('判断情境期间内容已变化，请重新试聊')
+        system = _persona_prompt(target, turns[-1]['content'], turns[:-1], decision, selected,
+                                 include_review=not payload.get('_holdout'))
     started = time.monotonic()
     if payload.get('recipe'):
         system += '\n\n【本次对比配方】\n' + str(payload['recipe'])[:4000]
@@ -644,7 +676,8 @@ def _reply(target: Job | PlayTarget, payload: dict, messages: list) -> dict:
                      system, turns, temperature=_chat_temperature(payload))
     reply = re.sub(r'^\s*(?:TA|对方|你|我)\s*[:：]\s*', '', reply.strip())
     return {'reply': _unwrap_hard_breaks(reply), 'seconds': round(time.monotonic() - started, 1),
-            'skill': root.name, 'scenario_id': matched.get('id', ''), **state}
+            'skill': root.name, 'scenario_id': decision.get('scenario_id', ''),
+            'routing': decision, 'retrieved': selected, **state}
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -758,6 +791,13 @@ class _Handler(BaseHTTPRequestHandler):
             return self._run()
         if parsed.path == "/api/chat":
             return self._chat()
+        if parsed.path.startswith('/api/cancel/'):
+            job = _JOBS.get(parsed.path.rsplit('/', 1)[-1])
+            if not job:
+                return self._json({'error': '任务不存在'}, 404)
+            if job.state in ('queued', 'running'):
+                job.cancel_requested = True
+            return self._json(job.snapshot())
         return self._json({"error": "没有这个接口"}, 404)
 
     def _workbench(self, route: str, post: bool = False) -> None:
@@ -783,6 +823,12 @@ class _Handler(BaseHTTPRequestHandler):
                     raise ValueError('技能内容已变化，请重新测评')
                 report = evaluation.save(root, {case['id']: result['reply']}, _routes(root), result['fingerprint'])
                 return self._json({'case': case['id'], **result, 'report': report})
+            if post and action == 'holdout-model':
+                with storage.lock(root):
+                    case = holdout.case_for(root, payload.get('case'), payload.get('fingerprint'))
+                result = _reply(PlayTarget(OUT_ROOT, name), {**payload, '_holdout': True}, [{'role': 'user', 'content': case['prompt']}])
+                report = holdout.record(root, case['id'], result['reply'], result['fingerprint'])
+                return self._json({'case': case['id'], **result, 'report': report})
             if post and action == 'incremental':
                 if payload.get('token'):
                     uploaded = _UPLOADS.get(str(payload['token']))
@@ -804,12 +850,30 @@ class _Handler(BaseHTTPRequestHandler):
                 with storage.lock(root):
                     run, case, config = ab.prepare(root, payload)
                 api_payload = {**payload, **config}
+                api_payload['_holdout'] = case.get('origin') == 'holdout'
+                actual = ab.actual_side(run, payload.get('side'), case)
+                api_payload['api_key'] = payload.get('api_key_' + actual) or payload.get('api_key')
                 if not str(api_payload.get('api_key') or '').strip():
                     raise ValueError('A/B 运行需要填写 API Key；只保存在本次请求内')
-                result = _reply(PlayTarget(OUT_ROOT, name), api_payload,
-                                [{'role': 'user', 'content': case['prompt']}])
+                messages, replies, total_seconds = [], [], 0
+                for prompt in [case['prompt'], *run.get('followups', [])]:
+                    messages.append({'role': 'user', 'content': prompt})
+                    result = _reply(PlayTarget(OUT_ROOT, name), api_payload, messages)
+                    if result['fingerprint'] != run['fingerprint']:
+                        raise ValueError('对比期间技能已变化，请新建对比')
+                    replies.append({'prompt': prompt, 'reply': result['reply']})
+                    total_seconds += result['seconds']
+                    messages.append({'role': 'assistant', 'content': result['reply']})
+                result.update(reply=replies[0]['reply'], seconds=round(total_seconds, 1), turns=replies)
                 return self._json(ab.save(root, payload, result, _routes(root)))
             with storage.lock(root):
+                if action == 'claims':
+                    return self._json(claims.save(root, payload) if post else claims.view(root))
+                if post and action == 'quote-link':
+                    return self._json(quote_links.save(root, payload))
+                if action == 'holdout':
+                    return self._json(holdout.record_many(root, payload.get('replies'), payload.get('fingerprint'))
+                                      if post else holdout.view(root))
                 if not post and action == 'package':
                     return self._json(Job('', [], root.parent, name).artifacts())
                 if not post and action == 'download':
@@ -825,7 +889,9 @@ class _Handler(BaseHTTPRequestHandler):
                 if not post and action == 'coverage':
                     return self._json(storage.load(root / 'references/coverage.json', {'matrix': [], 'summary': {}}))
                 if not post and action == 'messages':
-                    return self._json(storage.load(root / 'references/message-index.json', {'messages': []}))
+                    info = storage.load(root / 'references/observations.json', {})
+                    return self._json({**storage.load(root / 'references/message-index.json', {'messages': []}),
+                                       'target': info.get('target', ''), **versions.state(root)})
                 if not post and action == 'memory':
                     return self._json(storage.load(root / 'references/memory-ledger.json', {'memories': []}))
                 if action == 'questions':

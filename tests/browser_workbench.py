@@ -310,6 +310,65 @@ def run(browser_channel=None, screenshots=None):
                            for file in storage.local_dir(root).rglob('*') if file.is_file())
                 checked.append('rollback, feedback retention and rebuilt ZIP download')
 
+                tab('evidence')
+                claim = page.locator('[data-claim-card]').first
+                claim_id = claim.get_attribute('data-claim-card')
+                claim.locator('[data-claim-scope]').fill('只在熟人轻松聊天时使用')
+                claim.locator('[data-claim-status="kept"]').click()
+                claim = page.locator(f'[data-claim-card="{claim_id}"]')
+                expect(claim.locator('.review-badge')).to_have_text('已保留')
+                claim.locator('[data-claim-status="pending"]').click()
+                expect(claim.locator('.review-badge')).to_have_text('待审阅')
+                checked.append('trait review with explicit scope and undo')
+
+                tab('messages')
+                rows = storage.load(root / 'references/message-index.json')['messages']
+                reply_row = next(row for row in rows if row['speaker'] == '潘小雨' and row['index'] > 1 and
+                                 rows[row['index'] - 2]['speaker'] == '小蒯')
+                reply_index = reply_row['index']
+                row = page.locator(f'#message-{reply_index}')
+                row.locator('summary').click()
+                row.locator('[data-quote-source]').fill(str(reply_index - 1))
+                row.locator('[data-link-reply]').click()
+                expect(page.locator(f'#message-{reply_index}')).to_contain_text('引用对象：')
+                checked.append('manual quote association and regenerated scenario evidence')
+
+                page.locator('#f-name').fill('holdout-demo')
+                page.locator('#f-holdout').check()
+                page.locator('#run').click()
+                expect(page.locator('#state-text')).to_have_text('完成', timeout=30000)
+                expect(page.locator('#review-skill')).to_have_value('holdout-demo')
+                page.locator('#f-holdout').uncheck()
+                tab('evaluation')
+                page.locator('#eval-pool').select_option('holdout')
+                expect(page.locator('#view-evaluation')).to_contain_text('测试集')
+                held_total = page.locator('[data-reply]').count()
+                assert held_total > 0
+                page.get_by_text('模型测评接口（会发送用例和人设到所填接口）', exact=True).click()
+                page.locator('#eval-key').fill('local-test-only-key')
+                page.locator('#eval-model').click()
+                expect(page.locator('#eval-progress')).to_contain_text(f'已检查 {held_total} 个', timeout=30000)
+                checked.append('held-out sessions generated and evaluated through UI')
+
+                tab('ab')
+                for side in ('a', 'b'):
+                    page.locator(f'#ab-model-{side}').fill('blind-' + side)
+                page.locator('#ab-blind').check()
+                page.locator('#ab-pool').select_option('holdout')
+                page.locator('#ab-followups').fill('然后呢？')
+                page.locator('#ab-start').click()
+                expect(page.locator('#ab-run')).to_be_enabled()
+                blind_total = page.locator('.ab-case').count()
+                expect(page.locator('.ab-case').first).not_to_contain_text('blind-a')
+                for side in ('a', 'b'):
+                    page.locator(f'#ab-key-{side}').fill('local-test-only-key')
+                page.locator('#ab-run').click()
+                expect(page.locator('#ab-progress')).to_have_text(f'已完成 {blind_total * 2} / {blind_total * 2} 次回复', timeout=30000)
+                expect(page.locator('.ab-case').first).to_contain_text('查看连续追问')
+                page.locator('[data-ab-choice="a"]').first.click()
+                expect(page.locator('.ab-case').first).to_contain_text('blind-')
+                checked.append('blind held-out A/B, independent followups and reveal after choice')
+
                 if screenshots:
                     screenshots.mkdir(parents=True, exist_ok=True)
                     tab('scenarios')
