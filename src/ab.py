@@ -64,6 +64,9 @@ def prepare(root, payload):
     case = next((case for case in run['cases'] if case['id'] == payload.get('case')), None)
     if not case:
         raise ValueError('用例不存在')
+    issue = evaluation.case_issue(case)
+    if issue:
+        raise ValueError('用例证据不足：' + issue + '；请重新生成技能并新建对比')
     return run, case, run['configs'][side]
 
 

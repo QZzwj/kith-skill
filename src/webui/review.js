@@ -314,7 +314,10 @@ window.Review = (() => {
   function renderEvaluation(data) {
     $('view-evaluation').innerHTML = '<h2>情境回归测评</h2><p>用真实输入检查新的回复；原聊天答案只作参考。静态检查会找空回复、客服话术和路由冲突，是否像本人需要你对照判断。</p>' +
       (data.stale ? '<p>' + badge('内容已变化，旧报告失效', true) + '</p>' : '') +
-      `<p id="eval-progress" role="status">${data.total} 个用例 · 已检查 ${data.checked} 个 · 未命中问题 ${data.passed} 个</p>` +
+      `<p id="eval-progress" role="status">${data.total} 个用例 · 已检查 ${data.checked} 个 · 未命中静态问题 ${data.passed} 个</p>` +
+      ((data.excluded_cases || []).length ? '<section class="review-card">' +
+        `<h3>已排除 ${data.excluded_cases.length} 个证据不足的旧用例</h3><p>这些用例不计入结果，也不发送给模型。重新生成技能可更新情境与接话证据。</p>` +
+        data.excluded_cases.map(c => `<p>${esc(c.scenario)}：${esc(c.reason)}</p>`).join('') + '</section>' : '') +
       '<div class="review-actions"><button class="review-button" id="eval-static">检查填写的回复</button>' +
       '<button class="review-button" id="eval-model">调用模型运行全部用例</button></div>' +
       '<details class="review-card"><summary>模型测评接口（会发送用例和人设到所填接口）</summary><div class="review-config">' +
@@ -325,6 +328,7 @@ window.Review = (() => {
         (c.origin === 'feedback' ? badge('来自试聊差评', true) : '') +
         `<blockquote>输入：${esc(c.prompt)}</blockquote><p>期望接法：${esc(c.expected_move)}</p>` +
         (c.allowed_quotes?.length ? `<p class="review-muted">原聊天回复：${esc(c.allowed_quotes.join(' / '))}</p>` : '') +
+        sourceButton([...(c.incoming_messages || []), ...(c.reply_messages || [])]) +
         (c.note ? `<p>反馈备注：${esc(c.note)}</p>` : '') +
         `<label>待检查回复<textarea rows="3" data-reply="${esc(c.id)}" data-checked="${Boolean(c.checked)}" placeholder="填你试聊得到的回复">${esc(c.reply || '')}</textarea></label>` +
         `<p class="eval-result">${c.checked ? (c.passed ? '未命中静态问题，继续人工看语感' : esc(c.reasons.join('；'))) : '尚未运行'}</p></section>`).join('') || empty('这份技能未提供回归用例；重新生成，或在试聊中标注差评即可建立用例。'));

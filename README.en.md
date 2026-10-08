@@ -99,6 +99,8 @@ Generation filters generic labels, topic words presented as verbal habits, excha
 
 Regression reports also follow the skill content: a manual edit or rollback to different content invalidates the old report. **Passing static checks means only that these rules found no issue; it does not prove likeness.** Model regression sends the persona and cases to your configured endpoint; static checks stay offline.
 
+Regression cases retain source message numbers for reviewing the exchange and its context. Quoted replies with unresolved targets, such as `[回复消息]`, are excluded from examples; an incidental “said” in a story does not establish a challenge to a promise. The regression panel explains why unsupported legacy cases are excluded from counts and model calls. Regenerate the skill to update packaged situations and examples.
+
 Feedback, generated evaluation replies, privacy confirmations and version snapshots live in `<out>/.kith/<name>/` and survive server restarts. Raw feedback and review reports stay out of the ZIP. Generation adds applicable feedback as response corrections to `SKILL.md`; notes are preferences, never new chat facts or original evidence. Version management covers files owned by the generator, preserving custom files in the directory.
 
 Conflict detection uses shared wording and negation signals, so possible conflicts need review of the actual context and dates. An unrelated incremental update does not restore a conflicting memory to a fact. Scoped annotations guide local try-chat rather than rewriting the packaged memory status.

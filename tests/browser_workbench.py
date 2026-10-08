@@ -75,6 +75,21 @@ def run(browser_channel=None, screenshots=None):
                     expect(page.locator('#view-' + name)).not_to_contain_text('正在读取')
                 checked.append('legacy compatibility')
 
+                storage.write(legacy / 'references/evaluation.json', {'cases': [
+                    {'id': 'quoted', 'scenario_id': 'correction-or-promise',
+                     'scenario': '被指出说法或承诺有问题', 'prompt': '都说朋友要搬走了',
+                     'allowed_quotes': ['[回复消息]不是介绍，就是问问']}]})
+                page.locator('#review-refresh').click()
+                expect(page.locator('#review-status')).to_have_text('当前技能：legacy')
+                tab('evaluation')
+                expect(page.locator('#view-evaluation')).to_contain_text('已排除 1 个证据不足的旧用例')
+                expect(page.locator('#view-evaluation')).to_contain_text('引用回复的对象无法确认')
+                expect(page.locator('#eval-progress')).to_have_text('0 个用例 · 已检查 0 个 · 未命中静态问题 0 个')
+                expect(page.locator('#eval-model')).to_be_disabled()
+                expect(page.locator('#eval-static')).to_be_disabled()
+                assert not calls
+                checked.append('invalid legacy regression case excluded with a visible reason')
+
                 sample = Path(__file__).resolve().parents[1] / 'samples/demo-chat.json'
                 page.locator('#file').set_input_files(str(sample))
                 expect(page.locator('#run')).to_be_enabled()
@@ -173,6 +188,12 @@ def run(browser_channel=None, screenshots=None):
 
                 tab('evaluation')
                 expect(page.locator('#view-evaluation')).to_contain_text('来自试聊差评')
+                source = page.locator('.eval-case [data-source]').first
+                source_ids = source.get_attribute('data-source').split(',')
+                source.click()
+                expect(page.locator('#view-messages')).to_be_visible()
+                expect(page.locator('#message-' + source_ids[0])).to_have_class('review-card message-row message-row--selected')
+                tab('evaluation')
                 page.locator('[data-reply]').first.fill('不客气，请问还有什么')
                 page.locator('#eval-static').click()
                 expect(page.locator('.eval-result').first).to_contain_text('泛化客服话术')

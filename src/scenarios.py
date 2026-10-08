@@ -9,7 +9,8 @@ import re
 from collections import defaultdict
 from typing import Iterable
 
-from .conversations import Exchange, _SITUATIONS, reply_exchanges, select_exchanges, situation
+from .conversations import (Exchange, _SITUATIONS, matches_input, reply_exchanges,
+                            select_exchanges, situation)
 from .models import Msg
 
 _STOP = {
@@ -97,6 +98,11 @@ def route(text: str, scenarios: list[dict]) -> dict | None:
         return None
     ranked = []
     for item in scenarios:
+        label = item.get('label', '')
+        # Existing packages may retain the old broad trigger patterns. A
+        # matching word alone must not override the current situation rule.
+        if any(name == label for name, _, _, _ in _SITUATIONS) and not matches_input(label, text):
+            continue
         score = sum(len(signal) for signal in item.get('signals', []) if signal in text)
         pattern = item.get('trigger_pattern', '')
         if pattern and re.search(pattern, text):
@@ -135,4 +141,3 @@ def render_markdown(scenarios: list[dict]) -> str:
             lines.append(f"- 避免：{avoid}")
         lines.append("")
     return "\n".join(lines)
-

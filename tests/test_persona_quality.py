@@ -46,6 +46,21 @@ class ConversationBoundaryTests(unittest.TestCase):
         self.assertEqual(exchange.reply, ["……那叫改期", "别急"])
         self.assertEqual(situation(exchange)[0], "被指出说法或承诺有问题")
 
+    def test_quoted_reply_does_not_get_assigned_to_adjacent_input(self):
+        messages = [msg(0, '对方', '都说朋友要搬走了，过了一个月才缓过来'),
+                    msg(1, '目标', '[回复消息]不是介绍，就是碰到熟人，给问问'),
+                    msg(2, '目标', '再问问'),
+                    msg(3, '对方', '谢谢提醒'), msg(4, '目标', '请我喝水')]
+        exchanges = reply_exchanges(messages, '目标', '对方')
+        self.assertEqual(len(exchanges), 1)
+        self.assertEqual(exchanges[0].incoming, ['谢谢提醒'])
+        self.assertEqual(exchanges[0].reply_messages, [5])
+        self.assertTrue(messages[1].text.startswith('[回复消息]'))
+        for marker in ('[回复消息: earlier text]', '[引用消息]', '[引用回复]'):
+            with self.subTest(marker=marker):
+                self.assertFalse(reply_exchanges([msg(0, '对方', marker + '谢谢提醒'),
+                                                  msg(1, '目标', '请我喝水')], '目标', '对方'))
+
     def test_sampling_budget_and_years(self):
         messages = [msg(0, "对方", "一月对话", day=1), msg(1, "目标", "一月回复", day=1),
                     msg(0, "对方", "二月对话", day=2), msg(1, "目标", "二月回复", day=2)]

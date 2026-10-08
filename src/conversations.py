@@ -11,6 +11,14 @@ from .models import Msg, SESSION_GAP
 
 SESSION_SEPARATOR = "\n\n---\n\n"
 
+# These exports indicate a reply to a quoted message, but Msg does not carry
+# its target. Keep the source intact and avoid inventing an adjacent pair.
+_UNRESOLVED_REPLY = re.compile(r"\[\s*(?:回复消息|引用消息|引用回复)(?:\s*[:：][^\]]*)?\s*\]")
+
+
+def has_unresolved_reply(text: str) -> bool:
+    return bool(_UNRESOLVED_REPLY.search(text))
+
 
 def pack_windows(corpus: str, limit: int, batches: int) -> tuple[list[str], int]:
     """装入完整窗口，计入分隔符；超长窗口不截断，也不拆成伪连续对话。"""
@@ -84,6 +92,8 @@ def reply_exchanges(msgs: list[Msg], target: str, counterpart: str) -> list[Exch
         for (who, incoming), (speaker, reply) in zip(runs, runs[1:]):
             if who != counterpart or speaker != target:
                 continue
+            if any(has_unresolved_reply(text) for _, text in incoming + reply):
+                continue
             def text_only(lines):
                 return [(index, x.strip()) for index, x in lines if x.strip()
                         and not re.fullmatch(r"(?:\s*\[[^\[\]]*\]\s*)+", x)]
@@ -100,7 +110,11 @@ def reply_exchanges(msgs: list[Msg], target: str, counterpart: str) -> list[Exch
 # 规则只命名可在两侧原话中观察到的接法，不据关键词推断内心或永久性格。
 # 未落入这些情境的对话仍可作为原话示范，不强行归类。
 _SITUATIONS = (
-    ("被指出说法或承诺有问题", r"说|鸽|叫|不是|改|上次|那次|上周|放鸽子",
+    ("被指出说法或承诺有问题",
+     r"你(?:上次|上周|之前|刚才|那天|刚刚|不是|明明|曾经).{0,10}(?:说|答应|承诺)"
+     r"|你说的.{0,8}(?:不对|不是|错|矛盾)|(?:不是|明明)说(?:好|过)|说好的"
+     r"|说好.{0,12}(?:呢|怎么|咋|没|不)|放鸽子|又鸽|你.{0,6}(?:改口|食言|反悔)"
+     r"|(?:说法|承诺).{0,6}(?:不对|有问题|变了)|^[^，。！？\s]{1,10}那次[?？!！。]*$",
      r"那叫|这叫|那是|这周|准确|不是.{0,8}是",
      "抓住对方说法中的一点，短句修正或换个说法接回去"),
     ("被催或被提醒", r"催|写|交|报告|做完|弄完|忘|截止",
@@ -124,8 +138,15 @@ _SITUATIONS = (
 )
 
 
+def matches_input(label: str, text: str) -> bool:
+    return any(name == label and re.search(left, text)
+               for name, left, _, _ in _SITUATIONS)
+
+
 def situation(exchange: Exchange) -> tuple[str, str]:
     incoming, reply = " ".join(exchange.incoming), " ".join(exchange.reply)
+    if has_unresolved_reply(incoming) or has_unresolved_reply(reply):
+        return "日常接话", ""
     for label, left, right, action in _SITUATIONS:
         if re.search(left, incoming) and re.search(right, reply):
             return label, action

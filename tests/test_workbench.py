@@ -16,6 +16,7 @@ from zipfile import ZipFile
 from src import cli, evaluation, feedback, memory_ledger, privacy_review, scenarios, storage, versions, web
 from src.models import Msg
 from src.package import write_package
+from src.conversations import Exchange, situation
 
 
 def conversation():
@@ -48,6 +49,22 @@ class PackageFixture(unittest.TestCase):
 
 
 class ScenarioTests(unittest.TestCase):
+    def test_reported_story_is_not_a_challenge_to_a_promise(self):
+        text = '都说毕业时知道朋友要搬走了，花了一个月才缓过来'
+        reply = '不是介绍，就是碰到熟人，给问问'
+        self.assertEqual(situation(Exchange([text], [reply], 0)), ('日常接话', ''))
+        old_route = {'id': 'correction-or-promise', 'label': '被指出说法或承诺有问题',
+                     'trigger_pattern': '说|不是', 'signals': ['都说', '朋友要搬走'],
+                     'response_move': '短句修正'}
+        self.assertIsNone(scenarios.route(text, [old_route]))
+        self.assertEqual(scenarios.prompt(text, [old_route]), '')
+        for incoming, reply in [('你上周说戒了', '这周刚说'),
+                                ('烧烤那次', '那叫改期'),
+                                ('你不是说是介绍吗', '不是介绍，是问问'),
+                                ('说好的周末一起去呢', '那叫另约时间')]:
+            with self.subTest(incoming=incoming):
+                self.assertEqual(situation(Exchange([incoming], [reply], 0))[0], old_route['label'])
+
     def test_routes_are_grounded_in_actual_exchanges_across_sessions(self):
         routes = scenarios.build_scenarios(conversation(), '目标', '对方')
         route = scenarios.route('谢谢你提醒我', routes)
@@ -151,6 +168,47 @@ class FeedbackAndEvaluationTests(PackageFixture):
         self.assertFalse(creative['quote_grounded'])
         self.assertFalse(evaluation.static_check(case, '不客气', self.routes)['passed'])
         self.assertFalse(evaluation.static_check(case, '', self.routes)['passed'])
+
+    def test_invalid_original_examples_do_not_produce_passing_cases(self):
+        route = {'id': 'correction-or-promise', 'label': '被指出说法或承诺有问题',
+                 'response_move': '短句修正', 'trigger_pattern': '说', 'examples': [
+                     {'incoming': ['都说朋友要搬走了，过了一个月才缓过来'],
+                      'reply': ['不是介绍，就是问问']},
+                     {'incoming': ['你上周说戒了'], 'reply': ['[回复消息]这周刚说']},
+                     {'incoming': ['你上周说戒了'], 'reply': ['这周刚说'],
+                      'source': 'session:3', 'incoming_messages': [7], 'reply_messages': [8]}]}
+        cases = evaluation.build_cases([route])
+        self.assertEqual([case['id'] for case in cases], ['correction-or-promise-3'])
+        self.assertEqual(cases[0]['incoming_messages'], [7])
+        self.assertEqual(cases[0]['reply_messages'], [8])
+        self.assertEqual(cases[0]['source'], 'session:3')
+        invalid = {'id': 'old', 'scenario_id': route['id'], 'scenario': route['label'],
+                   'prompt': route['examples'][0]['incoming'][0],
+                   'allowed_quotes': route['examples'][0]['reply']}
+        checked = evaluation.static_check(invalid, '嗯，听到了', [route])
+        self.assertFalse(checked['passed'])
+        self.assertTrue(any('输入缺少' in reason for reason in checked['reasons']))
+
+    def test_saved_bad_cases_are_excluded_without_rewriting_package(self):
+        invalid = {'id': 'old-quoted', 'scenario_id': self.routes[0]['id'],
+                   'scenario': self.routes[0]['label'], 'prompt': '谢谢提醒',
+                   'allowed_quotes': ['[回复消息]请我喝水']}
+        path = self.root / 'references/evaluation.json'
+        storage.write(path, {'cases': self.cases + [invalid]})
+        original = path.read_bytes()
+        storage.write(storage.local_dir(self.root) / 'evaluation-run.json',
+                      {'fingerprint': versions.fingerprint(self.root), 'replies': {'old-quoted': '请我喝水'}})
+        report = evaluation.view(self.root, self.routes)
+        self.assertEqual(report['total'], len(self.cases))
+        self.assertEqual(report['checked'], 0)
+        self.assertEqual(report['passed'], 0)
+        self.assertEqual(report['excluded_cases'][0]['id'], invalid['id'])
+        self.assertIn('引用回复', report['excluded_cases'][0]['reason'])
+        self.assertEqual(path.read_bytes(), original)
+        run = evaluation.cases_for(self.root, self.routes)
+        self.assertNotIn(invalid['id'], [case['id'] for case in run])
+        self.assertTrue(evaluation.static_check(
+            {**invalid, 'origin': 'feedback', 'allowed_quotes': []}, '请我喝水', self.routes)['passed'])
 
     def test_reports_merge_and_invalidate_after_edits(self):
         fingerprint = versions.fingerprint(self.root)
@@ -298,6 +356,27 @@ class HttpTests(PackageFixture):
         self.assertEqual(result['report']['checked'], 1)
         self.assertIn('【当前情境参考】', call.call_args.args[3])
         self.assertTrue(all(b'test-only-key' not in p.read_bytes() for p in storage.local_dir(self.root).rglob('*') if p.is_file()))
+
+    def test_invalid_legacy_case_is_reported_and_never_sent_to_model(self):
+        case = {'id': 'quoted', 'scenario': '对方表达感谢', 'scenario_id': self.routes[0]['id'],
+                'prompt': '谢谢提醒', 'allowed_quotes': ['[回复消息]请我喝水']}
+        storage.write(self.root / 'references/evaluation.json', {'cases': [case]})
+        code, report = self.request('evaluation')
+        self.assertEqual(code, 200)
+        self.assertEqual(report['total'], 0)
+        self.assertEqual(len(report['excluded_cases']), 1)
+        with patch('src.web.llm_chat') as model:
+            self.assertEqual(self.request('evaluate-model', {'case': 'quoted',
+                'api_key': 'test-key', 'fingerprint': report['fingerprint']})[0], 400)
+            # A saved comparison from before the fix must not bypass the
+            # current case validation and send a quoted reply to a model.
+            run_id = 'a' * 16
+            storage.write(storage.local_dir(self.root) / 'ab' / (run_id + '.json'),
+                          {'id': run_id, 'fingerprint': report['fingerprint'], 'cases': [case],
+                           'configs': {}, 'results': {}, 'choices': {}})
+            self.assertEqual(self.request('ab', {'mode': 'run', 'run': run_id,
+                                                'case': 'quoted', 'side': 'a', 'api_key': 'test-key'})[0], 400)
+        model.assert_not_called()
 
     def test_concurrent_edit_during_model_call_does_not_save_old_reply(self):
         data = {'case': self.cases[0]['id'], 'fingerprint': versions.fingerprint(self.root), 'api_key': 'test-key'}
